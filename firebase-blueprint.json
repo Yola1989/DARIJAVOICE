@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Stores user account details, subscription status, and token balances.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "status": { "type": "string", "enum": ["pending", "active", "suspended"] },
+        "tokens": { "type": "number" },
+        "freeTrialsRemaining": { "type": "number" },
+        "subscriptionTier": { "type": "string", "enum": ["free", "starter", "pro", "unlimited"] },
+        "expiresAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "email", "role", "status", "tokens", "freeTrialsRemaining"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Global application configuration for free trials and token costs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "freeTrialMaxSeconds": { "type": "number" },
+        "freeTrialsDefaultCount": { "type": "number" },
+        "tokenCostPerSecond": { "type": "number" },
+        "contactWhatsApp": { "type": "string" },
+        "paymentInstructions": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "GenerationLog": {
+      "title": "GenerationLog",
+      "description": "History of TTS generations made by users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "text": { "type": "string" },
+        "voice": { "type": "string" },
+        "tokensUsed": { "type": "number" },
+        "isFreeTrial": { "type": "boolean" },
+        "duration": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "text", "tokensUsed", "createdAt"]
+    }
+  }
+}
