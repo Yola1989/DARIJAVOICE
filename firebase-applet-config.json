@@ -1,10 +1,10 @@
- {
-  apiKey: "AIzaSyB7JcZ7GLXMXHNe42-_fqjhvHIb8v9YwVY",
-  authDomain: "darijavoice-app2.firebaseapp.com",
-  projectId: "darijavoice-app2",
-  storageBucket: "darijavoice-app2.firebasestorage.app",
-  messagingSenderId: "344701327573",
-  appId: "1:344701327573:web:08c188fba4c49a66bd2a5c"
+
+
+{
+  "apiKey": "AIzaSyB7JcZ7GLXMXHNe42-_fqjhvHIb8v9YwVY",
+  "authDomain": "darijavoice-app2.firebaseapp.com",
+  "projectId": "darijavoice-app2",
+  "storageBucket": "darijavoice-app2.firebasestorage.app",
+  "messagingSenderId": "344701327573",
+  "appId": "1:344701327573:web:08c188fba4c49a66bd2a5c"
 }
-
-
