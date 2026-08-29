@@ -64,8 +64,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await signInWithGoogle();
       onClose();
     } catch (err: any) {
-      console.error(err);
-      setError('فشل في تسجيل الدخول عبر Google.');
+      console.error('Google Sign In Error:', err);
+      let msg = 'تعذر تسجيل الدخول عبر Google.';
+      if (err?.code === 'auth/unauthorized-domain') {
+        msg = `النطاق الحالي (${window.location.hostname}) غير مصرح به في Firebase. يرجى إضافة هذا النطاق إلى Authorized Domains في إعدادات Firebase Console، أو استخدم الدخول بالبريد الإلكتروني أدناه.`;
+      } else if (err?.code === 'auth/popup-blocked') {
+        msg = 'قام المتصفح بحظر النافذة المنبثقة (Popup). يرجى السماح بالنوافذ المنبثقة وإعادة المحاولة.';
+      } else if (err?.code === 'auth/popup-closed-by-user') {
+        msg = 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.';
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        msg = 'تسجيل الدخول عبر Google غير مفعّل في لوحة تحكم Firebase.';
+      } else if (err?.message) {
+        msg = `خطأ: ${err.message}`;
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
