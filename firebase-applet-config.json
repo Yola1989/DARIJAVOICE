@@ -1,12 +1,17 @@
-{
-  "projectId": "ageless-karma-99brs",
-  "appId": "1:933854864465:web:0dba359f7cf0418f8cc470",
-  "apiKey": "AIzaSyAI8LzgaogXqsSiZVF-OXR1bo4C8D_t-uM",
-  "authDomain": "ageless-karma-99brs.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-remixdarijatts-97007ee1-f148-45f6-8342-98239bbf7644",
-  "storageBucket": "ageless-karma-99brs.firebasestorage.app",
-  "messagingSenderId": "933854864465",
-  "measurementId": "",
-  "oAuthClientId": "933854864465-esghkuth23gcbg87i7q1hj2kc4eeq44d.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
-}
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyB7JcZ7GLXMXHNe42-_fqjhvHIb8v9YwVY",
+  authDomain: "darijavoice-app2.firebaseapp.com",
+  projectId: "darijavoice-app2",
+  storageBucket: "darijavoice-app2.firebasestorage.app",
+  messagingSenderId: "344701327573",
+  appId: "1:344701327573:web:08c188fba4c49a66bd2a5c"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
