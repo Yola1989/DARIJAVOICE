@@ -492,6 +492,105 @@ Rules:
   }
 });
 
+/**
+ * In-Memory & Resilient Server Storage for Customer Reviews
+ */
+let storedReviews: Array<{
+  id: string;
+  name: string;
+  role: string;
+  rating: number;
+  comment: string;
+  verified: boolean;
+  isVisible: boolean;
+  createdAt: string;
+}> = [
+  {
+    id: 'rev_1',
+    name: 'أمين البرنوصي',
+    role: 'صاحب متجر E-commerce وDropshipping',
+    rating: 5,
+    comment: 'صراحة صوت سلمى الإعلاني بدل ليا خدمة الفيديو كاملة! خدمت بيه 4 إعلانات فـ TikTok Ads ونتائج المبيعات كانت هربانة بلا ما نبقى نخلص فويس أوفر على كل فيديو.',
+    verified: true,
+    isVisible: true,
+    createdAt: 'منذ يومين',
+  },
+  {
+    id: 'rev_2',
+    name: 'مريم التازي',
+    role: 'صانعة محتوى وReels Creator',
+    rating: 5,
+    comment: 'نطق الدارجة طبيعي بزاف وحتى الكلمات الصعبة كينطقهم مقادين بلا لحن روبوتي. باقة Pro وافية ومكفية ونفعتني بزاف فالسوشيال ميديا.',
+    verified: true,
+    isVisible: true,
+    createdAt: 'منذ 4 أيام',
+  },
+  {
+    id: 'rev_3',
+    name: 'ياسين المهدوي',
+    role: 'Media Buyer ووكالة تسويق رقمي',
+    rating: 5,
+    comment: 'السرعة فالتوليد وجودة الـ WAV نقية بزاف. كنوفر أسبوع ديال التسجيل والتعديل فـ 5 ثواني فقط. منصة مغربية نفتخرو بيها 👏',
+    verified: true,
+    isVisible: true,
+    createdAt: 'منذ أسبوع',
+  },
+  {
+    id: 'rev_4',
+    name: 'حمزة الشاوي',
+    role: 'قناة بودكاست وشروحات يوتيوب',
+    rating: 5,
+    comment: 'صوت أنس وخديجة ممتاز فالشروحات والمقالات الطويلة. تفعيل النقاط كان فوري عبر الواتساب والدعم الفني متجاوبين وسريعين.',
+    verified: true,
+    isVisible: true,
+    createdAt: 'منذ أسبوعين',
+  },
+];
+
+app.get('/api/reviews', (req, res) => {
+  res.json({ success: true, reviews: storedReviews });
+});
+
+app.post('/api/reviews', (req, res) => {
+  try {
+    const { name, role, rating, comment, verified } = req.body;
+    if (!name || !comment) {
+      return res.status(400).json({ error: 'الاسم والتعليق مطلوبان.' });
+    }
+    const newReview = {
+      id: `rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: String(name).trim(),
+      role: String(role || 'مستخدم المنصة').trim(),
+      rating: Number(rating) || 5,
+      comment: String(comment).trim(),
+      verified: Boolean(verified),
+      isVisible: true,
+      createdAt: 'الآن',
+    };
+    storedReviews.unshift(newReview);
+    res.json({ success: true, review: newReview, reviews: storedReviews });
+  } catch (error: any) {
+    res.status(500).json({ error: 'تعذر حفظ التقييم.' });
+  }
+});
+
+app.patch('/api/reviews/:id', (req, res) => {
+  const { id } = req.params;
+  const { isVisible } = req.body;
+  const found = storedReviews.find((r) => r.id === id);
+  if (found) {
+    found.isVisible = isVisible !== undefined ? Boolean(isVisible) : !found.isVisible;
+    return res.json({ success: true, review: found, reviews: storedReviews });
+  }
+  res.status(404).json({ error: 'التقييم غير موجود.' });
+});
+
+app.delete('/api/reviews/:id', (req, res) => {
+  const { id } = req.params;
+  storedReviews = storedReviews.filter((r) => r.id !== id);
+  res.json({ success: true, reviews: storedReviews });
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

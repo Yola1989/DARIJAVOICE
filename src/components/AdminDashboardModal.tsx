@@ -91,7 +91,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       }
     );
 
-    // Subscribe to reviews
+    // Fetch and Subscribe to reviews
+    fetch('/api/reviews')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.reviews && Array.isArray(data.reviews)) {
+          setReviewsList(data.reviews);
+        }
+      })
+      .catch(() => {});
+
     const reviewsRef = collection(db, 'reviews');
     const unsubscribeReviews = onSnapshot(
       reviewsRef,
@@ -101,15 +110,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           snapshot.forEach((docSnap) => {
             revs.push({ id: docSnap.id, ...(docSnap.data() as Omit<CustomerReview, 'id'>) });
           });
-          setReviewsList(revs);
-        } else {
-          // Initialize with default reviews if none in db
-          setReviewsList(DEFAULT_REVIEWS);
+          // Merge with defaults to keep all reviews visible
+          const existingIds = new Set(revs.map((r) => r.id));
+          const merged = [...revs, ...DEFAULT_REVIEWS.filter((d) => !existingIds.has(d.id))];
+          setReviewsList(merged);
         }
       },
       (err) => {
-        console.error('Error fetching reviews:', err);
-        setReviewsList(DEFAULT_REVIEWS);
+        console.warn('Error fetching reviews from Firestore:', err);
       }
     );
 
@@ -635,15 +643,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       <button
                         type="button"
                         onClick={async () => {
+                          const newVis = !rev.isVisible;
+                          // Optimistic update
+                          setReviewsList((prev) =>
+                            prev.map((r) => (r.id === rev.id ? { ...r, isVisible: newVis } : r))
+                          );
+
+                          // Server API call
+                          try {
+                            await fetch(`/api/reviews/${rev.id}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ isVisible: newVis }),
+                            });
+                          } catch (e) {}
+
+                          // Firestore update
                           try {
                             const revDoc = doc(db, 'reviews', rev.id);
-                            await updateDoc(revDoc, { isVisible: !rev.isVisible });
-                          } catch (e) {
-                            // Local fallback
-                            setReviewsList((prev) =>
-                              prev.map((r) => (r.id === rev.id ? { ...r, isVisible: !r.isVisible } : r))
-                            );
-                          }
+                            await updateDoc(revDoc, { isVisible: newVis });
+                          } catch (e) {}
                         }}
                         className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition text-[11px] ${
                           rev.isVisible
@@ -668,12 +687,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         type="button"
                         onClick={async () => {
                           if (confirm('هل أنت متأكد من رغبتك في حذف هذا التقييم؟')) {
+                            // Optimistic update
+                            setReviewsList((prev) => prev.filter((r) => r.id !== rev.id));
+
+                            // Server API call
+                            try {
+                              await fetch(`/api/reviews/${rev.id}`, { method: 'DELETE' });
+                            } catch (e) {}
+
+                            // Firestore delete
                             try {
                               const revDoc = doc(db, 'reviews', rev.id);
                               await deleteDoc(revDoc);
-                            } catch (e) {
-                              setReviewsList((prev) => prev.filter((r) => r.id !== rev.id));
-                            }
+                            } catch (e) {}
                           }
                         }}
                         className="p-1.5 text-stone-500 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"

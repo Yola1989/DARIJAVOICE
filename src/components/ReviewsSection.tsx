@@ -6,13 +6,14 @@ import { collection, addDoc } from 'firebase/firestore';
 
 interface ReviewsSectionProps {
   reviews: CustomerReview[];
-  onAddReview?: (review: Omit<CustomerReview, 'id' | 'createdAt'>) => void;
+  onAddReview?: (review: CustomerReview) => void;
   userEmail?: string;
   userName?: string;
 }
 
 export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
   reviews,
+  onAddReview,
   userEmail,
   userName,
 }) => {
@@ -32,35 +33,61 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
     if (!comment.trim() || !name.trim()) return;
 
     setLoading(true);
-    try {
-      const newRev = {
-        name: name.trim(),
-        role: role.trim() || 'مستخدم المنصة',
-        rating,
-        comment: comment.trim(),
-        verified: Boolean(userEmail),
-        isVisible: true, // Auto visible or toggleable by admin
-        createdAt: new Date().toISOString(),
-      };
+    const newRevData = {
+      name: name.trim(),
+      role: role.trim() || 'مستخدم المنصة',
+      rating,
+      comment: comment.trim(),
+      verified: Boolean(userEmail),
+      isVisible: true,
+      createdAt: 'الآن',
+    };
 
-      await addDoc(collection(db, 'reviews'), newRev);
-      setSubmitted(true);
-      setTimeout(() => {
-        setIsModalOpen(false);
-        setSubmitted(false);
-        setComment('');
-      }, 2000);
+    let createdReview: CustomerReview = {
+      id: `rev_${Date.now()}`,
+      ...newRevData,
+    };
+
+    try {
+      // 1. Save to server API
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRevData),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.review) {
+          createdReview = data.review;
+        }
+      }
     } catch (err) {
-      console.error('Error adding review:', err);
-      // Fallback close
-      setSubmitted(true);
-      setTimeout(() => {
-        setIsModalOpen(false);
-        setSubmitted(false);
-      }, 2000);
-    } finally {
-      setLoading(false);
+      console.warn('Server API review save fallback:', err);
     }
+
+    try {
+      // 2. Save to Firestore
+      const docRef = await addDoc(collection(db, 'reviews'), {
+        ...newRevData,
+        createdAt: new Date().toISOString(),
+      });
+      createdReview.id = docRef.id;
+    } catch (err) {
+      console.warn('Firestore review save fallback:', err);
+    }
+
+    // 3. Update parent state immediately
+    if (onAddReview) {
+      onAddReview(createdReview);
+    }
+
+    setSubmitted(true);
+    setTimeout(() => {
+      setIsModalOpen(false);
+      setSubmitted(false);
+      setComment('');
+    }, 1800);
+    setLoading(false);
   };
 
   return (

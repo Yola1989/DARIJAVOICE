@@ -185,8 +185,19 @@ export default function App() {
     handleGenerateTTS(presetText);
   };
 
-  // Subscribe to reviews
+  // Load and subscribe to reviews
   React.useEffect(() => {
+    // 1. Initial fetch from Server API
+    fetch('/api/reviews')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.reviews && Array.isArray(data.reviews) && data.reviews.length > 0) {
+          setReviews(data.reviews);
+        }
+      })
+      .catch(() => {});
+
+    // 2. Realtime listener from Firestore
     try {
       const reviewsRef = collection(db, 'reviews');
       const unsubscribe = onSnapshot(
@@ -197,18 +208,19 @@ export default function App() {
             snapshot.forEach((docSnap) => {
               list.push({ id: docSnap.id, ...(docSnap.data() as Omit<CustomerReview, 'id'>) });
             });
-            setReviews(list);
-          } else {
-            setReviews(DEFAULT_REVIEWS);
+            // Merge with default reviews to keep featured reviews visible
+            const existingIds = new Set(list.map((r) => r.id));
+            const merged = [...list, ...DEFAULT_REVIEWS.filter((d) => !existingIds.has(d.id))];
+            setReviews(merged);
           }
         },
-        () => {
-          setReviews(DEFAULT_REVIEWS);
+        (err) => {
+          console.warn('Firestore reviews snapshot error:', err);
         }
       );
       return () => unsubscribe();
     } catch (e) {
-      setReviews(DEFAULT_REVIEWS);
+      console.warn('Firestore reviews init error:', e);
     }
   }, []);
 
@@ -512,6 +524,7 @@ export default function App() {
         {/* Customer Reviews & Social Proof Section */}
         <ReviewsSection
           reviews={reviews}
+          onAddReview={(newRev) => setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)])}
           userEmail={user?.email || undefined}
           userName={userProfile?.displayName || user?.displayName || undefined}
         />
