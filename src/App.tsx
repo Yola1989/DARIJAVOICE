@@ -17,6 +17,7 @@ import {
   Flame,
   MessageCircle,
   Lock,
+  Crown,
 } from 'lucide-react';
 import { VOICES, TONES, PRESET_PHRASES } from './data/presets';
 import { AudioPlayer } from './components/AudioPlayer';
@@ -199,6 +200,16 @@ export default function App() {
 
           {/* User Status / Account Controls */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 flex-wrap">
+            {/* Upgrade & Pricing Plans Button (Always visible) */}
+            <button
+              type="button"
+              onClick={() => setIsUpgradeModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-xs shadow-md shadow-amber-500/20 hover:brightness-110 transition border border-amber-300"
+            >
+              <Crown className="w-3.5 h-3.5 fill-stone-950 shrink-0" />
+              <span>الباقات والترقية</span>
+            </button>
+
             {/* Quick Action Tools */}
             <button
               type="button"

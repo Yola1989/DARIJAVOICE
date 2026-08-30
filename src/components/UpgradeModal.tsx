@@ -66,12 +66,13 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
                   <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded font-mono">Starter</span>
                 </div>
                 <div className="text-2xl font-black text-amber-400 my-2">
-                  {appSettings.starterPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم</span>
+                  {appSettings.starterPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم / شهرياً</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 500 نقطة (Tokens)</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> فتح جميع الأصوات</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> تحميل WAV عالي الدقة</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> <strong>15,000 حرف/نقطة</strong> (~40 إعلان أو ريلز)</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> فتح جميع الأصوات المغربية الأساسية</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> تحميل MP3 و WAV عالي الدقة</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> حقوق الاستخدام التجاري والإعلاني</li>
                 </ul>
               </div>
 
@@ -96,13 +97,13 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
                   <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30 font-mono">Pro</span>
                 </div>
                 <div className="text-2xl font-black text-amber-400 my-2">
-                  {appSettings.proPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم</span>
+                  {appSettings.proPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم / شهرياً</span>
                 </div>
                 <ul className="text-xs text-stone-200 space-y-2">
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> <strong>2,000 نقطة (Tokens)</strong></li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> أصوات الإعلانات (سلمى والمهدي)</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> صياغة وتوليد إعلانات Reels/TikTok</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> أولوية في المعالجة السريعة</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> <strong>50,000 حرف/نقطة</strong> (~150 إعلان)</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> أصوات الإعلانات الحصرية (سلمى، المهدي، أنس...)</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> صياغة وتوليد إعلانات Reels/TikTok بالـ AI</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> أولوية وسرعة فائقة في المعالجة</li>
                 </ul>
               </div>
 
@@ -124,12 +125,13 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
                   <span className="text-[10px] bg-blue-950 text-blue-300 px-2 py-0.5 rounded border border-blue-800/40 font-mono">Business</span>
                 </div>
                 <div className="text-2xl font-black text-white my-2">
-                  {appSettings.businessPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم</span>
+                  {appSettings.businessPriceMAD} <span className="text-xs text-stone-400 font-normal">درهم / شهرياً</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> 5,000 نقطة (Tokens)</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> توليد نصوص طويلة ومقالات</li>
-                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> دعم فني مخصص 24/7</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> <strong>150,000 حرف/نقطة</strong> (~450 إعلان وبودكاست)</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> توليد نصوص طويلة ومقالات بلا حدود</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> خوادم مخصصة بأعلى سرعة معالجة</li>
+                  <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-blue-400 shrink-0" /> دعم فني VIP مخصص 24/7</li>
                 </ul>
               </div>
 
