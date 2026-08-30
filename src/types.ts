@@ -68,3 +68,16 @@ export interface TTSHistoryItem {
   duration?: number;
   tokensDeducted?: number;
 }
+
+export interface CustomerReview {
+  id: string;
+  name: string;
+  role: string; // e.g. "صاحب متجر إلكتروني", "صانع محتوى ريلز"
+  avatar?: string;
+  rating: number; // 1 to 5
+  comment: string;
+  verified: boolean;
+  isVisible: boolean; // Control visibility from admin dashboard
+  createdAt: string;
+}
+

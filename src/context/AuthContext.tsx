@@ -47,7 +47,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+    try {
+      const cached = localStorage.getItem('darija_app_settings');
+      if (cached) return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(cached) };
+    } catch (e) {
+      // ignore
+    }
+    return DEFAULT_APP_SETTINGS;
+  });
   const [loading, setLoading] = useState(true);
 
   // Subscribe to App Settings
@@ -55,7 +63,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const settingsDoc = doc(db, 'settings', 'global');
     const unsubSettings = onSnapshot(settingsDoc, (snapshot) => {
       if (snapshot.exists()) {
-        setAppSettings({ ...DEFAULT_APP_SETTINGS, ...snapshot.data() });
+        const merged = { ...DEFAULT_APP_SETTINGS, ...snapshot.data() };
+        setAppSettings(merged);
+        try {
+          localStorage.setItem('darija_app_settings', JSON.stringify(merged));
+        } catch (e) {
+          // ignore
+        }
       } else {
         // Initialize default settings doc if missing
         setDoc(settingsDoc, DEFAULT_APP_SETTINGS).catch(console.error);

@@ -30,8 +30,12 @@ import { AuthModal } from './components/AuthModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { UpgradeModal } from './components/UpgradeModal';
 import { HistoryList } from './components/HistoryList';
-import { TTSHistoryItem } from './types';
+import { ReviewsSection } from './components/ReviewsSection';
+import { TTSHistoryItem, CustomerReview } from './types';
+import { DEFAULT_REVIEWS } from './data/presets';
 import { useAuth, isUserAdminEmail } from './context/AuthContext';
+import { db } from './lib/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 export default function App() {
   const { user, userProfile, appSettings, signOut, consumeTokens } = useAuth();
@@ -44,6 +48,10 @@ export default function App() {
   const [optimizeDarija, setOptimizeDarija] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<CustomerReview[]>(DEFAULT_REVIEWS);
+
+  // Active audio player state
+
 
   // Active audio player state
   const [activeAudio, setActiveAudio] = useState<{
@@ -176,6 +184,34 @@ export default function App() {
     setText(presetText);
     handleGenerateTTS(presetText);
   };
+
+  // Subscribe to reviews
+  React.useEffect(() => {
+    try {
+      const reviewsRef = collection(db, 'reviews');
+      const unsubscribe = onSnapshot(
+        reviewsRef,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: CustomerReview[] = [];
+            snapshot.forEach((docSnap) => {
+              list.push({ id: docSnap.id, ...(docSnap.data() as Omit<CustomerReview, 'id'>) });
+            });
+            setReviews(list);
+          } else {
+            setReviews(DEFAULT_REVIEWS);
+          }
+        },
+        () => {
+          setReviews(DEFAULT_REVIEWS);
+        }
+      );
+      return () => unsubscribe();
+    } catch (e) {
+      setReviews(DEFAULT_REVIEWS);
+    }
+  }, []);
+
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 font-sans pb-16 selection:bg-amber-500 selection:text-stone-950">
@@ -472,7 +508,15 @@ export default function App() {
           }}
           onClearHistory={() => setHistory([])}
         />
+
+        {/* Customer Reviews & Social Proof Section */}
+        <ReviewsSection
+          reviews={reviews}
+          userEmail={user?.email || undefined}
+          userName={userProfile?.displayName || user?.displayName || undefined}
+        />
       </main>
+
 
       {/* Modals */}
       <AuthModal

@@ -147,10 +147,10 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
           </div>
 
           {/* Payment Methods instructions */}
-          <div className="bg-stone-950 p-3.5 sm:p-4 rounded-2xl border border-stone-800/80 text-xs text-stone-400 space-y-1">
-            <p className="font-bold text-stone-300">طرق الدفع المتوفرة:</p>
-            <p className="leading-relaxed">
-              التحويل البنكي (CIH Bank / Attijariwafa / BMCE / Banque Populaire) أو عبر Cash Plus و Wafacash. يتم تفعيل الحساب وشحن النقاط فور التوصل بالإشعار!
+          <div className="bg-stone-950 p-3.5 sm:p-4 rounded-2xl border border-stone-800/80 text-xs text-stone-400 space-y-1.5">
+            <p className="font-bold text-stone-200">طرق وتعليمات الدفع:</p>
+            <p className="leading-relaxed whitespace-pre-line text-stone-300">
+              {appSettings.paymentInstructions || 'التحويل البنكي (CIH Bank / Attijariwafa / Cash Plus / Wafacash). تواصل معنا عبر الواتساب لتفعيل حسابك فوراً!'}
             </p>
           </div>
 

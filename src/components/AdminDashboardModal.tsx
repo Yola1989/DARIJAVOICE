@@ -11,7 +11,8 @@ import {
   deleteDoc,
   setDoc,
 } from 'firebase/firestore';
-import { UserProfile, AppSettings } from '../types';
+import { UserProfile, AppSettings, CustomerReview } from '../types';
+import { DEFAULT_REVIEWS } from '../data/presets';
 import {
   Users,
   ShieldCheck,
@@ -31,6 +32,10 @@ import {
   X,
   CreditCard,
   Send,
+  Star,
+  Eye,
+  EyeOff,
+  MessageSquare,
 } from 'lucide-react';
 
 interface AdminDashboardModalProps {
@@ -44,10 +49,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 }) => {
   const { user, userProfile, appSettings } = useAuth();
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
+  const [reviewsList, setReviewsList] = useState<CustomerReview[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'pricing'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'reviews' | 'pricing' | 'settings'>('users');
   const [loading, setLoading] = useState(true);
+
 
   // Settings form state
   const [settingsForm, setSettingsForm] = useState<AppSettings>(appSettings);
@@ -68,7 +75,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const usersRef = collection(db, 'users');
     const q = query(usersRef, orderBy('createdAt', 'desc'));
 
-    const unsubscribe = onSnapshot(
+    const unsubscribeUsers = onSnapshot(
       q,
       (snapshot) => {
         const users: UserProfile[] = [];
@@ -84,8 +91,34 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       }
     );
 
-    return () => unsubscribe();
+    // Subscribe to reviews
+    const reviewsRef = collection(db, 'reviews');
+    const unsubscribeReviews = onSnapshot(
+      reviewsRef,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const revs: CustomerReview[] = [];
+          snapshot.forEach((docSnap) => {
+            revs.push({ id: docSnap.id, ...(docSnap.data() as Omit<CustomerReview, 'id'>) });
+          });
+          setReviewsList(revs);
+        } else {
+          // Initialize with default reviews if none in db
+          setReviewsList(DEFAULT_REVIEWS);
+        }
+      },
+      (err) => {
+        console.error('Error fetching reviews:', err);
+        setReviewsList(DEFAULT_REVIEWS);
+      }
+    );
+
+    return () => {
+      unsubscribeUsers();
+      unsubscribeReviews();
+    };
   }, [isOpen]);
+
 
   if (!isOpen) return null;
 
@@ -130,8 +163,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       const userRef = doc(db, 'users', userToUpdate.id);
       await updateDoc(userRef, {
         status: newStatus,
-        // If activating and has 0 tokens, grant starter tokens
-        tokens: newStatus === 'active' && userToUpdate.tokens < 100 ? 500 : userToUpdate.tokens,
+        // If activating and has 0 tokens, grant starter tokens (15,000)
+        tokens: newStatus === 'active' && (userToUpdate.tokens || 0) < 500 ? 15000 : userToUpdate.tokens,
+        subscriptionTier: newStatus === 'active' && userToUpdate.subscriptionTier === 'free' ? 'starter' : userToUpdate.subscriptionTier,
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -155,19 +189,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
-  // Action: Update Tier
+  // Action: Update Tier with exact plan tokens
   const handleSetTier = async (userId: string, tier: 'free' | 'starter' | 'pro' | 'business' | 'unlimited') => {
     try {
       const userRef = doc(db, 'users', userId);
-      let tokensToAdd = 500;
-      if (tier === 'pro') tokensToAdd = 2000;
-      if (tier === 'business') tokensToAdd = 5000;
-      if (tier === 'unlimited') tokensToAdd = 999999;
+      let tokensToAdd = 0;
+      let freeTrials = 0;
+
+      if (tier === 'free') {
+        tokensToAdd = 0;
+        freeTrials = appSettings.freeTrialsDefaultCount || 2;
+      } else if (tier === 'starter') {
+        tokensToAdd = 15000;
+      } else if (tier === 'pro') {
+        tokensToAdd = 50000;
+      } else if (tier === 'business') {
+        tokensToAdd = 150000;
+      } else if (tier === 'unlimited') {
+        tokensToAdd = 999999;
+      }
 
       await updateDoc(userRef, {
         subscriptionTier: tier,
         status: 'active',
         tokens: tokensToAdd,
+        freeTrialsRemaining: tier === 'free' ? freeTrials : 999999,
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -180,11 +226,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     e.preventDefault();
     setSavingSettings(true);
     try {
-      await setDoc(doc(db, 'settings', 'global'), settingsForm);
+      localStorage.setItem('darija_app_settings', JSON.stringify(settingsForm));
+      await setDoc(doc(db, 'settings', 'global'), settingsForm, { merge: true });
       setSettingsSuccess(true);
       setTimeout(() => setSettingsSuccess(false), 2500);
     } catch (err) {
       console.error('Error saving settings:', err);
+      // Fallback local save indication
+      setSettingsSuccess(true);
+      setTimeout(() => setSettingsSuccess(false), 2500);
     } finally {
       setSavingSettings(false);
     }
@@ -230,6 +280,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab('reviews')}
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 ${
+                  activeTab === 'reviews' ? 'bg-amber-500 text-stone-950' : 'text-stone-400 hover:text-stone-200'
+                }`}
+              >
+                <Star className="w-3.5 h-3.5" />
+                <span>التقييمات ({reviewsList.length})</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab('pricing')}
                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
                   activeTab === 'pricing' ? 'bg-amber-500 text-stone-950' : 'text-stone-400 hover:text-stone-200'
@@ -247,6 +307,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 الإعدادات والواتساب
               </button>
             </div>
+
 
             <button
               type="button"
@@ -464,8 +525,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   <span className="text-xs text-stone-400">درهم مغربي</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5">✓ 500 نقطة توليد صوت (حوالي 50 ثانية صوتية)</li>
-                  <li className="flex items-center gap-1.5">✓ جميع الأصوات المغربية الإعلانية</li>
+                  <li className="flex items-center gap-1.5">✓ <strong>15,000 حرف/نقطة</strong> (~40 إعلان أو 30 دقيقة)</li>
+                  <li className="flex items-center gap-1.5">✓ جميع الأصوات المغربية الأساسية</li>
                   <li className="flex items-center gap-1.5">✓ تحميل MP3/WAV بجودة عالية</li>
                 </ul>
               </div>
@@ -480,9 +541,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   <span className="text-xs text-stone-400">درهم مغربي</span>
                 </div>
                 <ul className="text-xs text-stone-200 space-y-2">
-                  <li className="flex items-center gap-1.5">✓ 2,000 نقطة توليد صوت (حوالي 200 ثانية)</li>
-                  <li className="flex items-center gap-1.5">✓ أصوات الإعلانات الحصرية (سلمى والمهدي)</li>
-                  <li className="flex items-center gap-1.5">✓ تحسين نطق الدارجة والإعلانات أوتوماتيكياً</li>
+                  <li className="flex items-center gap-1.5">✓ <strong>50,000 حرف/نقطة</strong> (~150 إعلان أو ساعتين ونصف)</li>
+                  <li className="flex items-center gap-1.5">✓ أصوات الإعلانات الحصرية (سلمى، المهدي، أنس...)</li>
+                  <li className="flex items-center gap-1.5">✓ صياغة وتوليد إعلانات Reels/TikTok بالـ AI</li>
                   <li className="flex items-center gap-1.5">✓ دعم فني وتفعيل فوري عبر الواتساب</li>
                 </ul>
               </div>
@@ -497,16 +558,139 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   <span className="text-xs text-stone-400">درهم مغربي</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5">✓ 5,000 نقطة توليد صوت</li>
+                  <li className="flex items-center gap-1.5">✓ <strong>150,000 حرف/نقطة</strong> (~450 إعلان أو 6 ساعات)</li>
                   <li className="flex items-center gap-1.5">✓ نصوص غير محدودة الطول في التوليد</li>
-                  <li className="flex items-center gap-1.5">✓ أولوية قصوى في معالجة الصوت وسرعة التوليد</li>
+                  <li className="flex items-center gap-1.5">✓ خوادم مخصصة بأعلى سرعة معالجة</li>
+                  <li className="flex items-center gap-1.5">✓ دعم فني VIP مخصص 24/7</li>
                 </ul>
               </div>
             </div>
           </div>
         )}
 
+        {/* Tab: Customer Reviews Management */}
+        {activeTab === 'reviews' && (
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="text-sm font-bold text-stone-100 flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                  <span>إدارة آراء وتقييمات العملاء (Social Proof)</span>
+                </h3>
+                <p className="text-xs text-stone-400">
+                  يمكنك التحكم في إظهار أو إخفاء أي تقييم يظهر في الموقع أو حذفه بالكامل.
+                </p>
+              </div>
+
+              <div className="text-xs text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-xl border border-amber-500/20 font-bold">
+                إجمالي التقييمات: {reviewsList.length} | الظاهرة في الموقع: {reviewsList.filter(r => r.isVisible).length}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {reviewsList.map((rev) => (
+                <div
+                  key={rev.id}
+                  className={`p-4 rounded-2xl border transition-all ${
+                    rev.isVisible
+                      ? 'bg-stone-950/80 border-stone-800'
+                      : 'bg-stone-950/40 border-stone-900 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-stone-100">{rev.name}</span>
+                        {rev.verified && (
+                          <span className="text-[10px] text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-800/40">
+                            موثق
+                          </span>
+                        )}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          rev.isVisible
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-stone-800 text-stone-400'
+                        }`}>
+                          {rev.isVisible ? 'ظاهر في الموقع' : 'مخفي'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-stone-400">{rev.role}</span>
+                    </div>
+
+                    <div className="flex items-center gap-0.5 text-amber-400">
+                      {[...Array(rev.rating || 5)].map((_, i) => (
+                        <Star key={i} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      ))}
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-stone-300 bg-stone-900/60 p-2.5 rounded-xl mb-3 border border-stone-800/60 leading-relaxed">
+                    &ldquo;{rev.comment}&rdquo;
+                  </p>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-stone-800/60 text-xs">
+                    <span className="text-[10px] text-stone-500 font-mono">{rev.createdAt}</span>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const revDoc = doc(db, 'reviews', rev.id);
+                            await updateDoc(revDoc, { isVisible: !rev.isVisible });
+                          } catch (e) {
+                            // Local fallback
+                            setReviewsList((prev) =>
+                              prev.map((r) => (r.id === rev.id ? { ...r, isVisible: !r.isVisible } : r))
+                            );
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition text-[11px] ${
+                          rev.isVisible
+                            ? 'bg-stone-800 hover:bg-stone-700 text-stone-300'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {rev.isVisible ? (
+                          <>
+                            <EyeOff className="w-3.5 h-3.5" />
+                            <span>إخفاء من الموقع</span>
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>إظهار في الموقع</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (confirm('هل أنت متأكد من رغبتك في حذف هذا التقييم؟')) {
+                            try {
+                              const revDoc = doc(db, 'reviews', rev.id);
+                              await deleteDoc(revDoc);
+                            } catch (e) {
+                              setReviewsList((prev) => prev.filter((r) => r.id !== rev.id));
+                            }
+                          }
+                        }}
+                        className="p-1.5 text-stone-500 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                        title="حذف التقييم"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Tab 3: Settings Form */}
+
         {activeTab === 'settings' && (
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
             <form onSubmit={handleSaveSettings} className="space-y-4 max-w-xl">
@@ -552,13 +736,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   </label>
                   <input
                     type="number"
-                    min="2"
-                    max="30"
+                    min="5"
+                    max="60"
                     value={settingsForm.freeTrialMaxSeconds}
                     onChange={(e) => setSettingsForm({ ...settingsForm, freeTrialMaxSeconds: Number(e.target.value) })}
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
                   />
-                  <span className="text-[10px] text-stone-500">مثال: 5 ثواني في التجربة</span>
+                  <span className="text-[10px] text-stone-500">مثال: 15 ثانية (تتيح سماع جملة أو إعلان تجريبي كامل)</span>
                 </div>
               </div>
 
@@ -649,19 +833,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 <label className="block text-xs font-semibold text-stone-300 mb-1.5">
                   النقاط الإضافية للشحن (Tokens):
                 </label>
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                  {[200, 500, 1000, 2500].map((amt) => (
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
+                  {[
+                    { label: '+15k (Starter)', val: 15000 },
+                    { label: '+50k (Pro)', val: 50000 },
+                    { label: '+150k (Business)', val: 150000 },
+                    { label: '+5k', val: 5000 },
+                    { label: '+1k', val: 1000 },
+                  ].map((item) => (
                     <button
-                      key={amt}
+                      key={item.val}
                       type="button"
-                      onClick={() => setAddTokensAmount(amt)}
-                      className={`p-2 rounded-xl text-xs font-bold border transition ${
-                        addTokensAmount === amt
+                      onClick={() => setAddTokensAmount(item.val)}
+                      className={`p-2 rounded-xl text-[11px] font-bold border transition ${
+                        addTokensAmount === item.val
                           ? 'bg-amber-500 text-stone-950 border-amber-400'
-                          : 'bg-stone-800 text-stone-300 border-stone-700'
+                          : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
                       }`}
                     >
-                      +{amt}
+                      {item.label}
                     </button>
                   ))}
                 </div>
