@@ -93,7 +93,7 @@ export const VOICES: VoiceOption[] = [
   },
   {
     id: 'hamza',
-    geminiVoice: 'Puck',
+    geminiVoice: 'Fenrir',
     name: 'حمزة (Hamza)',
     arabicName: 'حمزة',
     gender: 'male',

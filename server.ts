@@ -61,11 +61,11 @@ const MOROCCAN_VOICE_MAP: Record<string, { geminiVoice: string; styleGuide: stri
   },
   amine: {
     geminiVoice: 'Charon',
-    styleGuide: 'Speak as Amine, a deep, wise, and dignified Moroccan narrator.',
+    styleGuide: 'Speak as Amine, a deep, wise, and dignified Moroccan male narrator with authentic cadence and pronunciation in Moroccan Darija.',
   },
   hamza: {
-    geminiVoice: 'Puck',
-    styleGuide: 'Speak as Hamza, a balanced and friendly Moroccan service speaker.',
+    geminiVoice: 'Fenrir',
+    styleGuide: 'Speak as Hamza, a calm, balanced, and friendly Moroccan male speaker with clear articulation in Moroccan Darija.',
   },
 };
 
