@@ -545,6 +545,7 @@ export default function App() {
       <UpgradeModal
         isOpen={isUpgradeModalOpen}
         onClose={() => setIsUpgradeModalOpen(false)}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
       />
 
       <ArabiziConverterModal

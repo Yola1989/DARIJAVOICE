@@ -55,6 +55,13 @@ service cloud.firestore {
       allow create: if true;
       allow update, delete: if isAdmin();
     }
+
+    // Subscription & Upgrade Orders
+    match /subscription_requests/{requestId} {
+      allow read: if isAuthenticated();
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
   }
 }
 

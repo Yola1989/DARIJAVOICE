@@ -81,3 +81,19 @@ export interface CustomerReview {
   createdAt: string;
 }
 
+export interface SubscriptionRequest {
+  id: string;
+  userId?: string;
+  userEmail: string;
+  userName?: string;
+  planName: string; // 'Starter' | 'Pro' | 'Business'
+  planTier: 'starter' | 'pro' | 'business';
+  priceMAD: number;
+  tokensCount: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  updatedAt?: string;
+  approvedAt?: string;
+  notes?: string;
+}
+

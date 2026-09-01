@@ -11,7 +11,7 @@ import {
   deleteDoc,
   setDoc,
 } from 'firebase/firestore';
-import { UserProfile, AppSettings, CustomerReview } from '../types';
+import { UserProfile, AppSettings, CustomerReview, SubscriptionRequest } from '../types';
 import { DEFAULT_REVIEWS } from '../data/presets';
 import {
   Users,
@@ -36,6 +36,13 @@ import {
   Eye,
   EyeOff,
   MessageSquare,
+  PackageCheck,
+  Zap,
+  ExternalLink,
+  Copy,
+  AlertTriangle,
+  Loader2,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface AdminDashboardModalProps {
@@ -50,11 +57,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const { user, userProfile, appSettings } = useAuth();
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [reviewsList, setReviewsList] = useState<CustomerReview[]>([]);
+  const [requestsList, setRequestsList] = useState<SubscriptionRequest[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'users' | 'reviews' | 'pricing' | 'settings'>('users');
+  const [requestsFilter, setRequestsFilter] = useState<string>('all');
+  const [activeTab, setActiveTab] = useState<'requests' | 'users' | 'reviews' | 'pricing' | 'settings'>('requests');
   const [loading, setLoading] = useState(true);
-
+  const [activatingReqId, setActivatingReqId] = useState<string | null>(null);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   // Settings form state
   const [settingsForm, setSettingsForm] = useState<AppSettings>(appSettings);
@@ -72,6 +82,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    // Fetch and Subscribe to Users
     const usersRef = collection(db, 'users');
     const q = query(usersRef, orderBy('createdAt', 'desc'));
 
@@ -88,6 +99,24 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       (err) => {
         console.error('Error fetching users:', err);
         setLoading(false);
+      }
+    );
+
+    // Fetch and Subscribe to Subscription Requests
+    const requestsRef = collection(db, 'subscription_requests');
+    const qReqs = query(requestsRef, orderBy('createdAt', 'desc'));
+
+    const unsubscribeRequests = onSnapshot(
+      qReqs,
+      (snapshot) => {
+        const reqs: SubscriptionRequest[] = [];
+        snapshot.forEach((docSnap) => {
+          reqs.push({ id: docSnap.id, ...(docSnap.data() as Omit<SubscriptionRequest, 'id'>) });
+        });
+        setRequestsList(reqs);
+      },
+      (err) => {
+        console.warn('Error fetching subscription requests from Firestore:', err);
       }
     );
 
@@ -123,6 +152,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     return () => {
       unsubscribeUsers();
+      unsubscribeRequests();
       unsubscribeReviews();
     };
   }, [isOpen]);
@@ -229,6 +259,84 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
+  // Action: Approve & Activate Subscription Request
+  const handleApproveRequest = async (req: SubscriptionRequest) => {
+    setActivatingReqId(req.id);
+    setActionSuccessMsg(null);
+    try {
+      const emailLower = (req.userEmail || '').trim().toLowerCase();
+      // 1. Find matching user profile
+      let targetUser = usersList.find(
+        (u) => (u.id && req.userId && u.id === req.userId) || (u.email && u.email.trim().toLowerCase() === emailLower)
+      );
+
+      const targetUserId = targetUser?.id || req.userId || 'user_' + Date.now();
+      const existingTokens = targetUser?.tokens || 0;
+      const newTokens = existingTokens + (req.tokensCount || 15000);
+
+      if (targetUser) {
+        // Update existing user doc
+        await updateDoc(doc(db, 'users', targetUser.id), {
+          status: 'active',
+          subscriptionTier: req.planTier,
+          tokens: newTokens,
+          freeTrialsRemaining: 999999,
+          updatedAt: new Date().toISOString(),
+        });
+      } else {
+        // Create active user profile for them
+        await setDoc(doc(db, 'users', targetUserId), {
+          id: targetUserId,
+          email: req.userEmail,
+          displayName: req.userName || req.userEmail.split('@')[0],
+          role: 'user',
+          status: 'active',
+          subscriptionTier: req.planTier,
+          tokens: req.tokensCount || 15000,
+          freeTrialsRemaining: 999999,
+          freeTrialMaxSeconds: appSettings.freeTrialMaxSeconds || 30,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      // Update request status in Firestore
+      await updateDoc(doc(db, 'subscription_requests', req.id), {
+        status: 'approved',
+        approvedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      setActionSuccessMsg(`✅ تم تفعيل حساب ${req.userEmail} بنجاح وشحن باقة ${req.planName} (${(req.tokensCount || 15000).toLocaleString()} نقطة)!`);
+      setTimeout(() => setActionSuccessMsg(null), 6000);
+    } catch (err: any) {
+      console.error('Error approving request:', err);
+      alert('حدث خطأ أثناء تفعيل الحساب: ' + (err?.message || 'يرجى المحاولة مجدداً'));
+    } finally {
+      setActivatingReqId(null);
+    }
+  };
+
+  const handleRejectRequest = async (reqId: string) => {
+    try {
+      await updateDoc(doc(db, 'subscription_requests', reqId), {
+        status: 'rejected',
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Error rejecting request:', err);
+    }
+  };
+
+  const handleDeleteRequest = async (reqId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا الطلب؟')) return;
+    try {
+      await deleteDoc(doc(db, 'subscription_requests', reqId));
+    } catch (err) {
+      console.error('Error deleting request:', err);
+    }
+  };
+
   // Save Global Settings
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,6 +355,17 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       setSavingSettings(false);
     }
   };
+
+  const pendingRequestsCount = requestsList.filter((r) => r.status === 'pending').length;
+
+  const filteredRequests = requestsList.filter((r) => {
+    const matchSearch =
+      (r.userEmail || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (r.userName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (r.planName || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const matchStatus = requestsFilter === 'all' || r.status === requestsFilter;
+    return matchSearch && matchStatus;
+  });
 
   return (
     <div 
@@ -270,13 +389,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   VIP 👑
                 </span>
               </div>
-              <p className="text-[11px] text-stone-400">إدارة المشتركين، شحن النقاط (Tokens)، وتفعيل الحسابات</p>
+              <p className="text-[11px] text-stone-400">إدارة طلبات الاشتراكات، شحن النقاط (Tokens)، وتفعيل الحسابات</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
             {/* Tabs */}
-            <div className="flex bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs font-bold overflow-x-auto">
+            <div className="flex bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs font-bold overflow-x-auto gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('requests')}
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 ${
+                  activeTab === 'requests' ? 'bg-amber-500 text-stone-950' : 'text-stone-400 hover:text-stone-200'
+                }`}
+              >
+                <PackageCheck className="w-3.5 h-3.5" />
+                <span>طلبات الاشتراكات</span>
+                {pendingRequestsCount > 0 && (
+                  <span className="bg-rose-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono animate-pulse">
+                    {pendingRequestsCount} جديد
+                  </span>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('users')}
@@ -328,6 +462,226 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Action Success Notification Banner */}
+        {actionSuccessMsg && (
+          <div className="bg-emerald-950 border-b border-emerald-500/40 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shrink-0">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-bold">{actionSuccessMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionSuccessMsg(null)}
+              className="text-stone-400 hover:text-white p-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Tab 0: Subscription Requests Management */}
+        {activeTab === 'requests' && (
+          <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 space-y-4">
+            {/* Stats Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-stone-950/60 border border-stone-800 p-3 rounded-2xl">
+                <span className="text-xs text-stone-400">إجمالي الطلبات</span>
+                <p className="text-lg font-black text-white">{requestsList.length}</p>
+              </div>
+              <div className="bg-rose-950/30 border border-rose-800/40 p-3 rounded-2xl">
+                <span className="text-xs text-rose-300">طلبات جديدة بانتظار التفعيل</span>
+                <p className="text-lg font-black text-rose-400">{pendingRequestsCount}</p>
+              </div>
+              <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-2xl">
+                <span className="text-xs text-emerald-300">تم تفعيلها وشحنها</span>
+                <p className="text-lg font-black text-emerald-400">
+                  {requestsList.filter((r) => r.status === 'approved').length}
+                </p>
+              </div>
+              <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-2xl">
+                <span className="text-xs text-amber-300">مجموع المبيعات المقدرة</span>
+                <p className="text-lg font-black text-amber-400">
+                  {requestsList
+                    .filter((r) => r.status === 'approved')
+                    .reduce((acc, curr) => acc + (curr.priceMAD || 0), 0)}{' '}
+                  <span className="text-xs font-normal text-stone-400">درهم</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Filter & Search */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-stone-500" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="ابحث بالإيميل، الاسم، أو نوع الباقة..."
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl pr-9 pl-4 py-2 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={requestsFilter}
+                  onChange={(e) => setRequestsFilter(e.target.value)}
+                  className="bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-300 focus:outline-none focus:border-amber-500"
+                >
+                  <option value="all">جميع الحالات ({requestsList.length})</option>
+                  <option value="pending">⏳ قيد الانتظار ({pendingRequestsCount})</option>
+                  <option value="approved">✅ مفعل ومكتمل ({requestsList.filter((r) => r.status === 'approved').length})</option>
+                  <option value="rejected">❌ ملغى ({requestsList.filter((r) => r.status === 'rejected').length})</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Requests List */}
+            <div className="flex-1 overflow-y-auto border border-stone-800/80 rounded-2xl bg-stone-950/40 divide-y divide-stone-800/60">
+              {filteredRequests.length === 0 ? (
+                <div className="p-12 text-center text-stone-500 text-xs">
+                  <PackageCheck className="w-10 h-10 text-stone-600 mx-auto mb-2 opacity-60" />
+                  <p>لا توجد طلبات تطابق بحثك حالياً.</p>
+                  <p className="text-[11px] text-stone-600 mt-1">
+                    عندما يضغط أي زائر أو مستخدم على باقة في نافذة الاشتراكات، سيظهر طلبه هنا فوراً مع إيميله وزر التفعيل المباشر.
+                  </p>
+                </div>
+              ) : (
+                filteredRequests.map((req) => {
+                  const isActivating = activatingReqId === req.id;
+                  const isPending = req.status === 'pending';
+                  const isApproved = req.status === 'approved';
+
+                  return (
+                    <div
+                      key={req.id}
+                      className={`p-4 transition hover:bg-stone-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+                        isPending ? 'bg-amber-950/10 border-r-4 border-r-amber-500' : ''
+                      }`}
+                    >
+                      {/* Left/Main Request Info */}
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              isPending
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : isApproved
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-stone-800 text-stone-400'
+                            }`}
+                          >
+                            {isPending ? '⏳ قيد الانتظار والدفع' : isApproved ? '✅ مفعل ومكتمل' : '❌ ملغى'}
+                          </span>
+
+                          <span className="bg-stone-800 text-stone-200 px-2 py-0.5 rounded text-[11px] font-bold">
+                            باقة {req.planName}
+                          </span>
+
+                          <span className="text-amber-400 text-xs font-black">
+                            {req.priceMAD} درهم
+                          </span>
+
+                          <span className="text-[11px] text-stone-400">
+                            (+{(req.tokensCount || 0).toLocaleString()} نقطة)
+                          </span>
+                        </div>
+
+                        {/* Customer Email & Name */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <div className="flex items-center gap-1.5 bg-stone-900 px-2.5 py-1 rounded-lg border border-stone-800 text-xs">
+                            <span className="text-stone-400">إيميل الزبون:</span>
+                            <strong className="text-white font-mono">{req.userEmail}</strong>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(req.userEmail);
+                                setActionSuccessMsg(`تم نسخ الإيميل: ${req.userEmail}`);
+                                setTimeout(() => setActionSuccessMsg(null), 2500);
+                              }}
+                              className="text-stone-500 hover:text-amber-400 p-0.5"
+                              title="نسخ الإيميل"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+
+                          {req.userName && (
+                            <span className="text-xs text-stone-400">({req.userName})</span>
+                          )}
+
+                          <span className="text-[10px] text-stone-500 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {req.createdAt ? new Date(req.createdAt).toLocaleString('ar-MA') : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Right Action Controls */}
+                      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                        {/* WhatsApp Message link */}
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(
+                            `السلام عليكم، بخصوص طلبك لتفعيل باقة (${req.planName}) لحسابك (${req.userEmail}) في موقع صوت الدارجة: تم تفعيل حسابك وشحن رصيدك بنجاح! بالصحة والراحة.`
+                          )}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-emerald-400 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-stone-700"
+                          title="إرسال رسالة واتساب للزبون"
+                        >
+                          <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>رد بالواتساب</span>
+                        </a>
+
+                        {/* Approve Button */}
+                        <button
+                          type="button"
+                          disabled={isActivating}
+                          onClick={() => handleApproveRequest(req)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-md ${
+                            isApproved
+                              ? 'bg-emerald-800/60 hover:bg-emerald-700 text-emerald-100 border border-emerald-600/50'
+                              : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white'
+                          } disabled:opacity-50`}
+                        >
+                          {isActivating ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Zap className="w-3.5 h-3.5 text-amber-300" />
+                          )}
+                          <span>{isApproved ? 'إعادة الشحن والتفعيل ⚡' : 'تفعيل الحساب وشحن الباقة ⚡'}</span>
+                        </button>
+
+                        {/* Reject / Delete */}
+                        {isPending && (
+                          <button
+                            type="button"
+                            onClick={() => handleRejectRequest(req.id)}
+                            className="p-2 text-stone-400 hover:text-rose-400 rounded-xl hover:bg-stone-800 transition"
+                            title="إلغاء الطلب"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRequest(req.id)}
+                          className="p-2 text-stone-500 hover:text-rose-400 rounded-xl hover:bg-stone-800 transition"
+                          title="حذف من السجل"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
 
         {/* Tab 1: Users Management */}
         {activeTab === 'users' && (

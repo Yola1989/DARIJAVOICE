@@ -1,24 +1,109 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Sparkles, PhoneCall, Check, MessageCircle, X, Coins, ShieldCheck, Zap } from 'lucide-react';
+import { db } from '../lib/firebase';
+import { collection, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { SubscriptionRequest } from '../types';
+import {
+  Sparkles,
+  PhoneCall,
+  Check,
+  MessageCircle,
+  X,
+  Coins,
+  ShieldCheck,
+  Zap,
+  Mail,
+  UserCheck,
+  AlertCircle,
+  Loader2,
+  CheckCircle2,
+} from 'lucide-react';
 
 interface UpgradeModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenAuth?: () => void;
 }
 
-export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) => {
-  const { userProfile, appSettings } = useAuth();
+export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, onOpenAuth }) => {
+  const { user, userProfile, appSettings } = useAuth();
+  const [manualEmail, setManualEmail] = useState('');
+  const [submittingPlan, setSubmittingPlan] = useState<string | null>(null);
+  const [submittedSuccess, setSubmittedSuccess] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleWhatsApp = (planName: string, price: number) => {
-    const phone = appSettings.contactWhatsApp.replace(/[^0-9+]/g, '');
-    const userEmail = userProfile?.email || 'غير مسجل';
-    const message = encodeURIComponent(
-      `السلام عليكم خويا، بغيت نفعل حسابي فموقع صوت الدارجة ونشحن باقة (${planName} - ${price} درهم).\nإيميل حسابي: ${userEmail}`
-    );
-    window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+  const currentEmail = (userProfile?.email || user?.email || manualEmail).trim();
+
+  const handleWhatsApp = async (planName: string, price: number) => {
+    setEmailError(null);
+    const targetEmail = (userProfile?.email || user?.email || manualEmail).trim();
+
+    if (!targetEmail) {
+      setEmailError('المرجو كتابة بريدك الإلكتروني (Gmail) أدناه لربط الباقة بحسابك وتفعيلها.');
+      return;
+    }
+
+    setSubmittingPlan(planName);
+
+    try {
+      const planTier = planName.toLowerCase() as 'starter' | 'pro' | 'business';
+      let tokensCount = 15000;
+      if (planTier === 'pro') tokensCount = 50000;
+      if (planTier === 'business') tokensCount = 150000;
+
+      // 1. Save subscription request into Firestore
+      const reqRef = doc(collection(db, 'subscription_requests'));
+      const newRequest: SubscriptionRequest = {
+        id: reqRef.id,
+        userId: user?.uid || userProfile?.id || '',
+        userEmail: targetEmail,
+        userName: userProfile?.displayName || user?.displayName || targetEmail.split('@')[0],
+        planName,
+        planTier,
+        priceMAD: price,
+        tokensCount,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+
+      await setDoc(reqRef, newRequest);
+
+      // 2. If user is logged in, record pending upgrade on user document
+      if (user?.uid) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          await updateDoc(userDocRef, {
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (uErr) {
+          console.warn('Notice updating user doc:', uErr);
+        }
+      }
+
+      setSubmittedSuccess(`تم تسجيل طلبك لباقة (${planName}). جاري فتح الواتساب للتواصل وتأكيد التفعيل...`);
+
+      // 3. Open WhatsApp with complete formatted message
+      const phone = appSettings.contactWhatsApp.replace(/[^0-9+]/g, '');
+      const message = encodeURIComponent(
+        `السلام عليكم خويا، بغيت نفعل حسابي فموقع صوت الدارجة ونشحن باقة (${planName} - ${price} درهم).\nإيميل حسابي: ${targetEmail}`
+      );
+
+      setTimeout(() => {
+        window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+        setSubmittingPlan(null);
+      }, 700);
+    } catch (err: any) {
+      console.error('Error saving subscription request:', err);
+      // Fallback open WhatsApp directly
+      const phone = appSettings.contactWhatsApp.replace(/[^0-9+]/g, '');
+      const message = encodeURIComponent(
+        `السلام عليكم خويا، بغيت نفعل حسابي فموقع صوت الدارجة ونشحن باقة (${planName} - ${price} درهم).\nإيميل حسابي: ${targetEmail}`
+      );
+      window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+      setSubmittingPlan(null);
+    }
   };
 
   return (
@@ -41,7 +126,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
         </button>
 
         {/* Scrollable Content inside modal */}
-        <div className="overflow-y-auto pr-1 space-y-5 pb-2">
+        <div className="overflow-y-auto pr-1 space-y-4 pb-2">
           {/* Modal Header */}
           <div className="text-center max-w-lg mx-auto pt-2 sm:pt-0">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold mb-2">
@@ -55,6 +140,73 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
               استفد من أصوات الدارجة المغربية الحصرية، أصوات الإعلانات لمنتجاتك على تيك توك وفيسبوك، والتوليد اللامحدود.
             </p>
           </div>
+
+          {/* User Email Banner / Input */}
+          <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3.5">
+            {user || userProfile ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                    <UserCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-stone-400">حسابك الحالي: </span>
+                    <strong className="text-amber-300 font-mono text-xs">{currentEmail}</strong>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 bg-stone-900 px-2.5 py-1 rounded-lg border border-stone-800 text-[11px] text-stone-300">
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>الرصيد: {userProfile?.tokens?.toLocaleString() || 0} نقطة</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-stone-200 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-amber-400" />
+                    <span>بريدك الإلكتروني (Gmail) لتفعيل الاشتراك:</span>
+                  </label>
+                  {onOpenAuth && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenAuth();
+                      }}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 underline font-bold"
+                    >
+                      أو سجل الدخول بضغطة زر
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="email"
+                  value={manualEmail}
+                  onChange={(e) => {
+                    setManualEmail(e.target.value);
+                    if (emailError) setEmailError(null);
+                  }}
+                  placeholder="مثال: yourname@gmail.com"
+                  className="w-full bg-stone-900 border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-500 text-left dir-ltr outline-none transition"
+                  dir="ltr"
+                />
+                {emailError && (
+                  <p className="text-[11px] text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{emailError}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Success Banner */}
+          {submittedSuccess && (
+            <div className="p-3 bg-emerald-950/50 border border-emerald-500/40 rounded-2xl flex items-center gap-2.5 text-xs text-emerald-300 animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{submittedSuccess}</span>
+            </div>
+          )}
 
           {/* Pricing Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
@@ -78,11 +230,16 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
 
               <button
                 type="button"
+                disabled={submittingPlan !== null}
                 onClick={() => handleWhatsApp('Starter', appSettings.starterPriceMAD)}
-                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 disabled:opacity-50"
               >
-                <MessageCircle className="w-4 h-4 text-emerald-400" />
-                <span>طلب عبر الواتساب</span>
+                {submittingPlan === 'Starter' ? (
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                ) : (
+                  <MessageCircle className="w-4 h-4 text-emerald-400" />
+                )}
+                <span>طلب وتفعيل عبر الواتساب</span>
               </button>
             </div>
 
@@ -109,10 +266,15 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
 
               <button
                 type="button"
+                disabled={submittingPlan !== null}
                 onClick={() => handleWhatsApp('Pro', appSettings.proPriceMAD)}
-                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 shadow-md"
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50"
               >
-                <MessageCircle className="w-4 h-4" />
+                {submittingPlan === 'Pro' ? (
+                  <Loader2 className="w-4 h-4 text-stone-950 animate-spin" />
+                ) : (
+                  <MessageCircle className="w-4 h-4" />
+                )}
                 <span>تفعيل فوري عبر الواتساب</span>
               </button>
             </div>
@@ -137,11 +299,16 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) =
 
               <button
                 type="button"
+                disabled={submittingPlan !== null}
                 onClick={() => handleWhatsApp('Business', appSettings.businessPriceMAD)}
-                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 disabled:opacity-50"
               >
-                <MessageCircle className="w-4 h-4 text-emerald-400" />
-                <span>طلب عبر الواتساب</span>
+                {submittingPlan === 'Business' ? (
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                ) : (
+                  <MessageCircle className="w-4 h-4 text-emerald-400" />
+                )}
+                <span>طلب وتفعيل عبر الواتساب</span>
               </button>
             </div>
           </div>
