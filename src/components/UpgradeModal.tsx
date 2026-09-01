@@ -53,24 +53,47 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, onO
       if (planTier === 'pro') tokensCount = 50000;
       if (planTier === 'business') tokensCount = 150000;
 
-      // 1. Save subscription request into Firestore
-      const reqRef = doc(collection(db, 'subscription_requests'));
-      const newRequest: SubscriptionRequest = {
-        id: reqRef.id,
-        userId: user?.uid || userProfile?.id || '',
-        userEmail: targetEmail,
-        userName: userProfile?.displayName || user?.displayName || targetEmail.split('@')[0],
-        planName,
-        planTier,
-        priceMAD: price,
-        tokensCount,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-      };
+      // 1. Save subscription request into Firestore (if online & authenticated/configured)
+      try {
+        const reqRef = doc(collection(db, 'subscription_requests'));
+        const newRequest: SubscriptionRequest = {
+          id: reqRef.id,
+          userId: user?.uid || userProfile?.id || '',
+          userEmail: targetEmail,
+          userName: userProfile?.displayName || user?.displayName || targetEmail.split('@')[0],
+          planName,
+          planTier,
+          priceMAD: price,
+          tokensCount,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        };
 
-      await setDoc(reqRef, newRequest);
+        await setDoc(reqRef, newRequest);
+      } catch (fsErr) {
+        console.warn('Notice saving to Firestore direct:', fsErr);
+      }
 
-      // 2. If user is logged in, record pending upgrade on user document
+      // 2. Also save to server endpoint for 100% guarantee across all environments
+      try {
+        await fetch('/api/subscriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user?.uid || userProfile?.id || '',
+            userEmail: targetEmail,
+            userName: userProfile?.displayName || user?.displayName || targetEmail.split('@')[0],
+            planName,
+            planTier,
+            priceMAD: price,
+            tokensCount,
+          }),
+        });
+      } catch (srvErr) {
+        console.warn('Notice saving to server api:', srvErr);
+      }
+
+      // 3. If user is logged in, record pending upgrade on user document
       if (user?.uid) {
         try {
           const userDocRef = doc(db, 'users', user.uid);

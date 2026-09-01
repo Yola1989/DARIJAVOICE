@@ -4,6 +4,13 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
+import {
+  handleGetSubscriptions,
+  handleCreateSubscription,
+  handleUpdateSubscriptionStatus,
+  handleDeleteSubscription,
+} from './server_subscriptions';
+
 dotenv.config();
 
 const app = express();
@@ -546,6 +553,11 @@ let storedReviews: Array<{
     createdAt: 'منذ أسبوعين',
   },
 ];
+
+app.get('/api/subscriptions', handleGetSubscriptions);
+app.post('/api/subscriptions', handleCreateSubscription);
+app.patch('/api/subscriptions/:id', handleUpdateSubscriptionStatus);
+app.delete('/api/subscriptions/:id', handleDeleteSubscription);
 
 app.get('/api/reviews', (req, res) => {
   res.json({ success: true, reviews: storedReviews });

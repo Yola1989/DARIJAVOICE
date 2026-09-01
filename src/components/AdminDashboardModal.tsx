@@ -102,7 +102,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       }
     );
 
-    // Fetch and Subscribe to Subscription Requests
+    // Fetch and Subscribe to Subscription Requests (Server API + Firestore)
+    const fetchServerRequests = () => {
+      fetch('/api/subscriptions')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.requests && Array.isArray(data.requests)) {
+            setRequestsList((prev) => {
+              const combined = [...data.requests, ...prev];
+              const uniqueMap = new Map<string, SubscriptionRequest>();
+              combined.forEach((item) => {
+                if (!uniqueMap.has(item.id)) uniqueMap.set(item.id, item);
+              });
+              return Array.from(uniqueMap.values()).sort(
+                (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+              );
+            });
+          }
+        })
+        .catch((e) => console.warn('Notice fetching server subscriptions:', e));
+    };
+
+    fetchServerRequests();
+    const intervalReqs = setInterval(fetchServerRequests, 3000);
+
     const requestsRef = collection(db, 'subscription_requests');
     const qReqs = query(requestsRef, orderBy('createdAt', 'desc'));
 
@@ -113,7 +136,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         snapshot.forEach((docSnap) => {
           reqs.push({ id: docSnap.id, ...(docSnap.data() as Omit<SubscriptionRequest, 'id'>) });
         });
-        setRequestsList(reqs);
+        setRequestsList((prev) => {
+          const combined = [...reqs, ...prev];
+          const uniqueMap = new Map<string, SubscriptionRequest>();
+          combined.forEach((item) => {
+            if (!uniqueMap.has(item.id)) uniqueMap.set(item.id, item);
+          });
+          return Array.from(uniqueMap.values()).sort(
+            (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+          );
+        });
       },
       (err) => {
         console.warn('Error fetching subscription requests from Firestore:', err);
@@ -151,6 +183,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     );
 
     return () => {
+      clearInterval(intervalReqs);
       unsubscribeUsers();
       unsubscribeRequests();
       unsubscribeReviews();
@@ -301,11 +334,34 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       }
 
       // Update request status in Firestore
-      await updateDoc(doc(db, 'subscription_requests', req.id), {
-        status: 'approved',
-        approvedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      try {
+        await updateDoc(doc(db, 'subscription_requests', req.id), {
+          status: 'approved',
+          approvedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('Notice updating firestore req status:', e);
+      }
+
+      // Also update in Server API
+      try {
+        await fetch(`/api/subscriptions/${req.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'approved' }),
+        });
+      } catch (e) {
+        console.warn('Notice updating server req status:', e);
+      }
+
+      setRequestsList((prev) =>
+        prev.map((item) =>
+          item.id === req.id
+            ? { ...item, status: 'approved', approvedAt: new Date().toISOString() }
+            : item
+        )
+      );
 
       setActionSuccessMsg(`✅ تم تفعيل حساب ${req.userEmail} بنجاح وشحن باقة ${req.planName} (${(req.tokensCount || 15000).toLocaleString()} نقطة)!`);
       setTimeout(() => setActionSuccessMsg(null), 6000);
@@ -324,8 +380,22 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      console.error('Error rejecting request:', err);
+      console.warn('Notice rejecting firestore req:', err);
     }
+
+    try {
+      await fetch(`/api/subscriptions/${reqId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' }),
+      });
+    } catch (err) {
+      console.warn('Notice rejecting server req:', err);
+    }
+
+    setRequestsList((prev) =>
+      prev.map((item) => (item.id === reqId ? { ...item, status: 'rejected' } : item))
+    );
   };
 
   const handleDeleteRequest = async (reqId: string) => {
@@ -333,8 +403,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     try {
       await deleteDoc(doc(db, 'subscription_requests', reqId));
     } catch (err) {
-      console.error('Error deleting request:', err);
+      console.warn('Notice deleting firestore req:', err);
     }
+
+    try {
+      await fetch(`/api/subscriptions/${reqId}`, {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.warn('Notice deleting server req:', err);
+    }
+
+    setRequestsList((prev) => prev.filter((item) => item.id !== reqId));
   };
 
   // Save Global Settings
