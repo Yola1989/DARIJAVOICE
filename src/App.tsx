@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   Volume2,
   Sparkles,
@@ -18,40 +18,35 @@ import {
   MessageCircle,
   Lock,
   Crown,
-} from 'lucide-react';
-import { VOICES, TONES, PRESET_PHRASES } from './data/presets';
-import { AudioPlayer } from './components/AudioPlayer';
-import { VoiceSelector } from './components/VoiceSelector';
-import { ToneSelector } from './components/ToneSelector';
-import { PresetSelector } from './components/PresetSelector';
-import { ArabiziConverterModal } from './components/ArabiziConverterModal';
-import { AdScriptGeneratorModal } from './components/AdScriptGeneratorModal';
-import { AuthModal } from './components/AuthModal';
-import { AdminDashboardModal } from './components/AdminDashboardModal';
-import { UpgradeModal } from './components/UpgradeModal';
-import { HistoryList } from './components/HistoryList';
-import { ReviewsSection } from './components/ReviewsSection';
-import { TTSHistoryItem, CustomerReview } from './types';
-import { DEFAULT_REVIEWS } from './data/presets';
-import { useAuth, isUserAdminEmail } from './context/AuthContext';
-import { db } from './lib/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+} from "lucide-react";
+import { VOICES, TONES, PRESET_PHRASES } from "./data/presets";
+import { AudioPlayer } from "./components/AudioPlayer";
+import { VoiceSelector } from "./components/VoiceSelector";
+import { ToneSelector } from "./components/ToneSelector";
+import { PresetSelector } from "./components/PresetSelector";
+import { ArabiziConverterModal } from "./components/ArabiziConverterModal";
+import { AdScriptGeneratorModal } from "./components/AdScriptGeneratorModal";
+import { AuthModal } from "./components/AuthModal";
+import { AdminDashboardModal } from "./components/AdminDashboardModal";
+import { UpgradeModal } from "./components/UpgradeModal";
+import { HistoryList } from "./components/HistoryList";
+import { ReviewsSection } from "./components/ReviewsSection";
+import { TTSHistoryItem, CustomerReview } from "./types";
+import { useAuth, isUserAdminEmail } from "./context/AuthContext";
+import { apiFetch } from "./lib/api";
 
 export default function App() {
-  const { user, userProfile, appSettings, signOut, consumeTokens } = useAuth();
+  const { user, userProfile, appSettings, signOut } = useAuth();
 
   const [text, setText] = useState(
-    'واش كتقلبي على الهمزة وعطر يخلي ريحتك فايحة طول النهار؟ جبنا ليك هاد البرودوي الحصري بأحسن ثمن فالمغرب! الكمية جد محدودة والتوصيل فابور حتال باب دارك!'
+    "واش كتقلبي على الهمزة وعطر يخلي ريحتك فايحة طول النهار؟ جبنا ليك هاد البرودوي الحصري بأحسن ثمن فالمغرب! الكمية جد محدودة والتوصيل فابور حتال باب دارك!",
   );
-  const [selectedVoice, setSelectedVoice] = useState('salma_ads');
-  const [selectedTone, setSelectedTone] = useState('commercial');
+  const [selectedVoice, setSelectedVoice] = useState("salma_ads");
+  const [selectedTone, setSelectedTone] = useState("commercial");
   const [optimizeDarija, setOptimizeDarija] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<CustomerReview[]>(DEFAULT_REVIEWS);
-
-  // Active audio player state
-
+  const [reviews, setReviews] = useState<CustomerReview[]>([]);
 
   // Active audio player state
   const [activeAudio, setActiveAudio] = useState<{
@@ -72,17 +67,23 @@ export default function App() {
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
-  const isAdmin = userProfile?.role === 'admin' || isUserAdminEmail(user?.email);
-  const isActive = userProfile?.status === 'active' || isAdmin;
+  const isAdmin =
+    userProfile?.role === "admin" || isUserAdminEmail(user?.email);
+  const isActive = userProfile?.status === "active" || isAdmin;
   const isFreeTrialUser = !isActive;
-  const freeTrialsLeft = userProfile ? userProfile.freeTrialsRemaining : appSettings.freeTrialsDefaultCount;
+  const freeTrialsLeft = userProfile
+    ? userProfile.freeTrialsRemaining
+    : appSettings.freeTrialsDefaultCount;
 
-  const handleGenerateTTS = async (customText?: string, customVoice?: string) => {
+  const handleGenerateTTS = async (
+    customText?: string,
+    customVoice?: string,
+  ) => {
     const textToProcess = (customText || text).trim();
     const voiceToUse = customVoice || selectedVoice;
 
     if (!textToProcess) {
-      setError('المرجو كتابة نص بالدارجة أولاً.');
+      setError("المرجو كتابة نص بالدارجة أولاً.");
       return;
     }
 
@@ -92,25 +93,23 @@ export default function App() {
       return;
     }
 
-    // Check token / trial balance
-    let isTrialRun = false;
-    let maxSecondsLimit: number | undefined = undefined;
-
     if (!isAdmin) {
       if (!isActive) {
         // Pending / Free user
         if (freeTrialsLeft <= 0) {
-          setError('لقد استنفدت جميع التجارب المجانية. المرجو تفعيل حسابك للاستمتاع بتوليد الأصوات بدون حدود.');
+          setError(
+            "لقد استنفدت جميع التجارب المجانية. المرجو شحن رصيد للاستمرار في توليد الأصوات.",
+          );
           setIsUpgradeModalOpen(true);
           return;
         }
-        isTrialRun = true;
-        maxSecondsLimit = appSettings.freeTrialMaxSeconds || 5; // Cut at 5 seconds for free trial
       } else {
         // Active subscriber: check token balance
         const estimatedTokensNeeded = Math.ceil(textToProcess.length / 4);
         if ((userProfile?.tokens || 0) < estimatedTokensNeeded) {
-          setError('رصيدك من النقاط (Tokens) غير كافٍ. المرجو شحن رصيدك عبر الواتساب.');
+          setError(
+            "رصيدك من النقاط (Tokens) غير كافٍ. المرجو شحن رصيدك عبر الواتساب.",
+          );
           setIsUpgradeModalOpen(true);
           return;
         }
@@ -124,29 +123,15 @@ export default function App() {
     const voiceObj = VOICES.find((v) => v.id === voiceToUse);
 
     try {
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const data = await apiFetch<any>("/api/tts", {
+        method: "POST",
         body: JSON.stringify({
           text: textToProcess,
           voiceId: voiceToUse,
           toneDirective: toneObj?.promptDirective,
           optimizeDarija,
-          maxSecondsLimit,
         }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'فشل في توليد الصوت. يرجى التأكد من الاتصال والمحاولة من جديد.');
-      }
-
-      // Deduct tokens or decrement free trials
-      if (!isAdmin) {
-        const tokensToDeduct = Math.max(5, Math.ceil(data.duration * (appSettings.tokensPerSecond || 10)));
-        await consumeTokens(tokensToDeduct, isTrialRun);
-      }
 
       const newAudioItem = {
         audioUrl: data.audioDataUrl,
@@ -174,7 +159,7 @@ export default function App() {
       setHistory((prev) => [historyEntry, ...prev.slice(0, 14)]);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'حدث خطأ أثناء الاتصال بالخادم.');
+      setError(err.message || "حدث خطأ أثناء الاتصال بالخادم.");
     } finally {
       setIsLoading(false);
     }
@@ -185,45 +170,12 @@ export default function App() {
     handleGenerateTTS(presetText);
   };
 
-  // Load and subscribe to reviews
+  // Public, moderated reviews
   React.useEffect(() => {
-    // 1. Initial fetch from Server API
-    fetch('/api/reviews')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.reviews && Array.isArray(data.reviews) && data.reviews.length > 0) {
-          setReviews(data.reviews);
-        }
-      })
-      .catch(() => {});
-
-    // 2. Realtime listener from Firestore
-    try {
-      const reviewsRef = collection(db, 'reviews');
-      const unsubscribe = onSnapshot(
-        reviewsRef,
-        (snapshot) => {
-          if (!snapshot.empty) {
-            const list: CustomerReview[] = [];
-            snapshot.forEach((docSnap) => {
-              list.push({ id: docSnap.id, ...(docSnap.data() as Omit<CustomerReview, 'id'>) });
-            });
-            // Merge with default reviews to keep featured reviews visible
-            const existingIds = new Set(list.map((r) => r.id));
-            const merged = [...list, ...DEFAULT_REVIEWS.filter((d) => !existingIds.has(d.id))];
-            setReviews(merged);
-          }
-        },
-        (err) => {
-          console.warn('Firestore reviews snapshot error:', err);
-        }
-      );
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn('Firestore reviews init error:', e);
-    }
+    apiFetch<{ reviews: CustomerReview[] }>("/api/reviews")
+      .then(({ reviews }) => setReviews(reviews || []))
+      .catch(() => setReviews([]));
   }, []);
-
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 font-sans pb-16 selection:bg-amber-500 selection:text-stone-950">
@@ -237,12 +189,16 @@ export default function App() {
             </div>
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <h1 className="text-sm sm:text-base md:text-lg font-black text-white">صوت الدارجة</h1>
+                <h1 className="text-sm sm:text-base md:text-lg font-black text-white">
+                  صوت الدارجة
+                </h1>
                 <span className="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
                   PRO
                 </span>
               </div>
-              <p className="text-[10px] sm:text-[11px] text-stone-400 hidden xs:block">تحويل نصوص الدارجة المغربية وأصوات الإعلانات</p>
+              <p className="text-[10px] sm:text-[11px] text-stone-400 hidden xs:block">
+                تحويل نصوص الدارجة المغربية وأصوات الإعلانات
+              </p>
             </div>
           </div>
 
@@ -303,7 +259,11 @@ export default function App() {
                 >
                   <Coins className="w-3 h-3 shrink-0" />
                   <span>
-                    {isAdmin ? 'VIP ∞' : isActive ? `${userProfile?.tokens || 0} ن` : `تجربة (${freeTrialsLeft})`}
+                    {isAdmin
+                      ? "VIP ∞"
+                      : isActive
+                        ? `${userProfile?.tokens || 0} ن`
+                        : `تجربة (${freeTrialsLeft})`}
                   </span>
                 </button>
 
@@ -344,7 +304,6 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        
         {/* Account Status / Free Trial Alert Banner */}
         {user && !isActive && !isAdmin && (
           <div className="bg-gradient-to-r from-amber-950/60 via-stone-900 to-amber-950/40 border border-amber-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
@@ -354,10 +313,13 @@ export default function App() {
               </div>
               <div className="text-right">
                 <h3 className="text-xs sm:text-sm font-bold text-amber-200">
-                  أنت الآن في وضع التجربة المجانية (لديك {freeTrialsLeft} تجارب متبقية بحد أقصى {appSettings.freeTrialMaxSeconds} ثواني لكل مقطع)
+                  أنت الآن في وضع التجربة المجانية (لديك {freeTrialsLeft} تجارب
+                  متبقية بحد أقصى {appSettings.freeTrialMaxSeconds} ثواني لكل
+                  مقطع)
                 </h3>
                 <p className="text-[11px] text-stone-400">
-                  لتفعيل حسابك بشكل دائم والاستمتاع بتوليد غير محدود لجميع الأصوات والإعلانات، تواصل معنا عبر الواتساب.
+                  من بعد التجربة تقدر تشحن الباقة المناسبة وتستعمل الرصيد حسب
+                  حاجتك، بلا تجديد شهري إجباري.
                 </p>
               </div>
             </div>
@@ -376,7 +338,10 @@ export default function App() {
         <div className="bg-stone-900/70 border border-stone-800 rounded-3xl p-5 md:p-6 shadow-xl space-y-5">
           {/* Text Area Header */}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label htmlFor="darija-text-input" className="text-sm font-bold text-stone-200 flex items-center gap-1.5">
+            <label
+              htmlFor="darija-text-input"
+              className="text-sm font-bold text-stone-200 flex items-center gap-1.5"
+            >
               <Wand2 className="w-4 h-4 text-amber-400" />
               <span>النص المراد تحويله إلى صوت بالدارجة المغربية:</span>
             </label>
@@ -393,7 +358,7 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={() => setText('')}
+                onClick={() => setText("")}
                 className="text-xs text-stone-500 hover:text-rose-400 transition px-1"
               >
                 مسح النص
@@ -415,7 +380,8 @@ export default function App() {
             <div className="flex justify-between items-center mt-1 px-1 text-xs text-stone-500">
               <span className="flex items-center gap-1">
                 <Info className="w-3.5 h-3.5 text-stone-400" />
-                يدعم اللهجة المغربية بجميع فروعها ونصوص الإعلانات والعرنسية (Franco-Arabe)
+                يدعم اللهجة المغربية بجميع فروعها ونصوص الإعلانات والعرنسية
+                (Franco-Arabe)
               </span>
               <span>{text.length} / 1500 حرف</span>
             </div>
@@ -444,7 +410,8 @@ export default function App() {
                 تحسين النطق المغربي والإعلاني تلقائياً (Phonetic Darija Tuning)
               </span>
               <span className="text-[11px] text-stone-400">
-                ضبط مخارج الحروف، التسكين، والنبرة التسويقية لتبدو طبيعية واحترافية 100%
+                ضبط مخارج الحروف، التسكين، والنبرة التسويقية لتبدو طبيعية
+                واحترافية 100%
               </span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -524,12 +491,10 @@ export default function App() {
         {/* Customer Reviews & Social Proof Section */}
         <ReviewsSection
           reviews={reviews}
-          onAddReview={(newRev) => setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)])}
           userEmail={user?.email || undefined}
           userName={userProfile?.displayName || user?.displayName || undefined}
         />
       </main>
-
 
       {/* Modals */}
       <AuthModal

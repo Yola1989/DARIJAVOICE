@@ -1,5 +1,14 @@
-import React, { useState } from 'react';
-import { Sparkles, Megaphone, Loader2, ArrowRight, Check, X, Flame } from 'lucide-react';
+import React, { useState } from "react";
+import {
+  Sparkles,
+  Megaphone,
+  Loader2,
+  ArrowRight,
+  Check,
+  X,
+  Flame,
+} from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 interface AdScriptGeneratorModalProps {
   isOpen: boolean;
@@ -12,8 +21,10 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
   onClose,
   onApplyScript,
 }) => {
-  const [productDesc, setProductDesc] = useState('');
-  const [audience, setAudience] = useState('المشترين المغاربة عبر فيسبوك وتيك توك');
+  const [productDesc, setProductDesc] = useState("");
+  const [audience, setAudience] = useState(
+    "المشترين المغاربة عبر فيسبوك وتيك توك",
+  );
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     title?: string;
@@ -30,21 +41,21 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch('/api/darija/generate-ad-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const data = await apiFetch<{
+        title?: string;
+        script?: string;
+        hook?: string;
+        voiceRecommendation?: string;
+      }>("/api/darija/generate-ad-script", {
+        method: "POST",
         body: JSON.stringify({
           productDescription: productDesc,
           targetAudience: audience,
         }),
       });
-      const data = await resp.json();
-      if (!resp.ok || data.error) {
-        throw new Error(data.error || 'فشل في توليد نص الإعلان.');
-      }
       setResult(data);
     } catch (err: any) {
-      setError(err.message || 'حدث خطأ غير متوقع.');
+      setError(err.message || "حدث خطأ غير متوقع.");
     } finally {
       setLoading(false);
     }
@@ -52,17 +63,17 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
 
   const handleUse = () => {
     if (result?.script) {
-      onApplyScript(result.script, result.voiceRecommendation || 'salma_ads');
+      onApplyScript(result.script, result.voiceRecommendation || "salma_ads");
       onClose();
     }
   };
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto"
       onClick={onClose}
     >
-      <div 
+      <div
         className="bg-stone-900 border border-amber-500/40 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden shadow-2xl p-5 sm:p-6 relative text-right my-auto"
         onClick={(e) => e.stopPropagation()}
       >
@@ -140,9 +151,14 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
           {result && (
             <div className="bg-stone-950 border border-amber-500/40 rounded-2xl p-4 space-y-3 animate-in fade-in">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-black text-amber-400">الإعلان المقترح بالدارجة:</span>
+                <span className="text-xs font-black text-amber-400">
+                  الإعلان المقترح بالدارجة:
+                </span>
                 <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded-full">
-                  الصوت الموصى به: {result.voiceRecommendation === 'salma_ads' ? 'سلمى (Salma)' : 'المهدي (Mehdi)'}
+                  الصوت الموصى به:{" "}
+                  {result.voiceRecommendation === "salma_ads"
+                    ? "سلمى (Salma)"
+                    : "المهدي (Mehdi)"}
                 </span>
               </div>
 

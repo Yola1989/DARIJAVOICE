@@ -1,8 +1,0 @@
-{
-  "name": "Remix صوت الدارجة - Darija TTS",
-  "description": "تحويل نصوص الدارجة المغربية إلى كلام مسموع بصوت طبيعي ونبرة مغربية أصيلة بالذكاء الاصطناعي",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

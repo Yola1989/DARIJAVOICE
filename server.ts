@@ -1,626 +1,1349 @@
-import express from 'express';
-import path from 'path';
-import dotenv from 'dotenv';
-import { GoogleGenAI, Modality } from '@google/genai';
-import { createServer as createViteServer } from 'vite';
-
+import express, { NextFunction, Request, Response } from "express";
+import path from "node:path";
+import crypto from "node:crypto";
+import dotenv from "dotenv";
+import { GoogleGenAI, Modality } from "@google/genai";
+import { createServer as createViteServer } from "vite";
+import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import {
-  handleGetSubscriptions,
-  handleCreateSubscription,
-  handleUpdateSubscriptionStatus,
-  handleDeleteSubscription,
-} from './server_subscriptions';
+  DocumentReference,
+  FieldValue,
+  Timestamp,
+  getFirestore,
+} from "firebase-admin/firestore";
 
 dotenv.config();
 
-const app = express();
-const PORT = 3000;
-
-app.use(express.json({ limit: '10mb' }));
-
-// Lazy/Safe AI client initialization
-let aiClient: GoogleGenAI | null = null;
-function getAiClient(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not configured in environment.');
-    }
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-  return aiClient;
+if (!getApps().length) {
+  initializeApp({ credential: applicationDefault() });
 }
 
-/**
- * Mapping Moroccan Voice IDs to underlying Gemini TTS Prebuilt Voices
- */
-const MOROCCAN_VOICE_MAP: Record<string, { geminiVoice: string; styleGuide: string }> = {
+const db = getFirestore();
+const app = express();
+const PORT = Number(process.env.PORT || 8080);
+const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+
+const ADMIN_EMAILS = new Set([
+  "younes.ahdidou@gmail.com",
+  "younes.ahdidou@googlemail.com",
+]);
+
+const PLANS = {
+  mini: {
+    name: "Mini",
+    priceMAD: 59,
+    tokensCount: 18000,
+    includedMinutes: 30,
+    validityMonths: 6,
+  },
+  starter: {
+    name: "Starter",
+    priceMAD: 99,
+    tokensCount: 36000,
+    includedMinutes: 60,
+    validityMonths: 6,
+  },
+  pro: {
+    name: "Pro",
+    priceMAD: 199,
+    tokensCount: 108000,
+    includedMinutes: 180,
+    validityMonths: 6,
+  },
+  business: {
+    name: "Business",
+    priceMAD: 599,
+    tokensCount: 432000,
+    includedMinutes: 720,
+    validityMonths: 12,
+  },
+} as const;
+
+const DEFAULT_SETTINGS = {
+  freeTrialsDefaultCount: 2,
+  freeTrialMaxSeconds: 15,
+  tokensPerSecond: 10,
+  contactWhatsApp: "+212600000000",
+  paymentInstructions: "تواصل معنا عبر الواتساب لتأكيد الأداء وتفعيل الرصيد.",
+  miniPriceMAD: 59,
+  starterPriceMAD: 99,
+  proPriceMAD: 199,
+  businessPriceMAD: 599,
+  launchBonusEnabled: true,
+  launchBonusLimit: 100,
+  launchBonusMinutes: 10,
+  launchBonusClaimedCount: 0,
+  commercialSettingsVersion: 2,
+};
+
+function normalizeSettings(data: Record<string, any> | undefined) {
+  const merged = { ...DEFAULT_SETTINGS, ...(data || {}) };
+
+  if (Number(data?.commercialSettingsVersion || 0) < 2) {
+    return {
+      ...merged,
+      freeTrialsDefaultCount: 2,
+      freeTrialMaxSeconds: 15,
+      miniPriceMAD: 59,
+      starterPriceMAD: 99,
+      proPriceMAD: 199,
+      businessPriceMAD: 599,
+      launchBonusEnabled: true,
+      launchBonusLimit: 100,
+      launchBonusMinutes: 10,
+      launchBonusClaimedCount: 0,
+      commercialSettingsVersion: 2,
+    };
+  }
+
+  return merged;
+}
+
+function addMonthsIso(months: number) {
+  const date = new Date();
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString();
+}
+
+const VOICES: Record<string, { voice: string; guide: string }> = {
   khadija: {
-    geminiVoice: 'Kore',
-    styleGuide: 'Speak as Khadija, a warm, natural Moroccan woman speaking authentic Darija.',
+    voice: "Kore",
+    guide: "Warm natural Moroccan Darija woman",
   },
   salma_ads: {
-    geminiVoice: 'Aoede',
-    styleGuide: 'Speak as Salma, a top-tier Moroccan commercial voiceover artist for social media and TikTok ads with persuasive rhythm and high marketing punch.',
+    voice: "Aoede",
+    guide: "Persuasive Moroccan commercial voiceover woman",
   },
   zainab_promo: {
-    geminiVoice: 'Zephyr',
-    styleGuide: 'Speak as Zainab, an elegant, smooth Moroccan brand promoter for beauty and luxury products.',
+    voice: "Zephyr",
+    guide: "Elegant Moroccan brand promoter",
   },
   mariam: {
-    geminiVoice: 'Kore',
-    styleGuide: 'Speak as Mariam, an articulate, clear Moroccan female educator and explainer.',
+    voice: "Kore",
+    guide: "Clear Moroccan educator",
   },
   youssef: {
-    geminiVoice: 'Puck',
-    styleGuide: 'Speak as Youssef, an energetic, modern Moroccan young man with authentic cadence.',
+    voice: "Puck",
+    guide: "Energetic young Moroccan man",
   },
   mehdi_ads: {
-    geminiVoice: 'Fenrir',
-    styleGuide: 'Speak as Mehdi, a powerful, enthusiastic Moroccan male commercial voiceover specialist for e-commerce sales, discounts, and high-converting marketing ads.',
+    voice: "Fenrir",
+    guide: "Powerful Moroccan commercial voiceover man",
   },
   amine: {
-    geminiVoice: 'Charon',
-    styleGuide: 'Speak as Amine, a deep, wise, and dignified Moroccan male narrator with authentic cadence and pronunciation in Moroccan Darija.',
+    voice: "Charon",
+    guide: "Deep dignified Moroccan narrator",
   },
   hamza: {
-    geminiVoice: 'Fenrir',
-    styleGuide: 'Speak as Hamza, a calm, balanced, and friendly Moroccan male speaker with clear articulation in Moroccan Darija.',
+    voice: "Fenrir",
+    guide: "Calm friendly Moroccan man",
   },
 };
 
-/**
- * Encapsulate raw PCM 16-bit mono 24000Hz into a valid standard WAV audio container
- */
-function pcmToWavBuffer(pcmBuffer: Buffer, sampleRate = 24000, numChannels = 1, bitsPerSample = 16): Buffer {
-  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const dataSize = pcmBuffer.length;
+declare global {
+  namespace Express {
+    interface Request {
+      actor?: { uid: string; email: string; admin: boolean };
+    }
+  }
+}
+
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(express.json({ limit: "256kb" }));
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()",
+  );
+  res.setHeader(
+    "X-Request-Id",
+    req.header("X-Request-Id") || crypto.randomUUID(),
+  );
+  next();
+});
+
+const origins = new Set(
+  (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+
+app.use((req, res, next) => {
+  const origin = req.header("origin");
+
+  if (origin && origins.size && !origins.has(origin)) {
+    return res.status(403).json({ error: "Origin not allowed" });
+  }
+
+  if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PATCH,DELETE,OPTIONS",
+  );
+
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+const buckets = new Map<string, { n: number; at: number }>();
+
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  const key = req.ip || "unknown";
+  const now = Date.now();
+  const bucket = buckets.get(key);
+
+  if (!bucket || now - bucket.at > 60_000) {
+    buckets.set(key, { n: 1, at: now });
+  } else if (++bucket.n > 90) {
+    return res.status(429).json({ error: "طلبات كثيرة، انتظر قليلاً." });
+  }
+
+  next();
+});
+
+const bucketCleanup = setInterval(() => {
+  const cutoff = Date.now() - 5 * 60_000;
+  for (const [key, bucket] of buckets) {
+    if (bucket.at < cutoff) buckets.delete(key);
+  }
+}, 5 * 60_000);
+bucketCleanup.unref();
+
+async function auth(req: Request, res: Response, next: NextFunction) {
+  try {
+    const raw = req.header("authorization") || "";
+
+    if (!raw.startsWith("Bearer ")) {
+      return res
+        .status(401)
+        .json({ error: "خاصك تسجل الدخول.", code: "AUTH_REQUIRED" });
+    }
+
+    const decoded = await getAuth().verifyIdToken(raw.slice(7), true);
+    const email = (decoded.email || "").toLowerCase();
+    const profile = await db.doc(`users/${decoded.uid}`).get();
+
+    req.actor = {
+      uid: decoded.uid,
+      email,
+      admin: ADMIN_EMAILS.has(email) || profile.data()?.role === "admin",
+    };
+
+    next();
+  } catch {
+    return res.status(401).json({
+      error: "الجلسة منتهية، سجل الدخول من جديد.",
+      code: "INVALID_TOKEN",
+    });
+  }
+}
+
+function admin(req: Request, res: Response, next: NextFunction) {
+  if (!req.actor?.admin) {
+    return res.status(403).json({ error: "غير مصرح." });
+  }
+
+  next();
+}
+
+function ai() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY غير مضبوط");
+  return new GoogleGenAI({ apiKey: key });
+}
+
+function pcmWav(pcm: Buffer) {
   const header = Buffer.alloc(44);
-
-  // RIFF header
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + dataSize, 4);
-  header.write('WAVE', 8);
-
-  // "fmt " sub-chunk
-  header.write('fmt ', 12);
+  header.write("RIFF");
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
   header.writeUInt32LE(16, 16);
   header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-
-  // "data" sub-chunk
-  header.write('data', 36);
-  header.writeUInt32LE(dataSize, 40);
-
-  return Buffer.concat([header, pcmBuffer]);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(24000, 24);
+  header.writeUInt32LE(48000, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'Moroccan Darija TTS Engine with Commercial Ad Mastery' });
+async function synthesize(text: string, voiceId: string, tone?: string) {
+  const voice = VOICES[voiceId] || VOICES.khadija;
+  const result = await ai().models.generateContent({
+    model: "gemini-3.1-flash-tts-preview",
+    contents: [
+      {
+        parts: [
+          {
+            text:
+              `Speak in authentic Moroccan Darija. Persona: ${voice.guide}. ` +
+              `${tone || ""}\nText:\n${text}`,
+          },
+        ],
+      },
+    ],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: voice.voice },
+        },
+      },
+    },
+  });
+
+  const part = result.candidates?.[0]?.content?.parts?.[0];
+  if (!part?.inlineData?.data) throw new Error("لم يتم توليد الصوت");
+
+  const raw = Buffer.from(part.inlineData.data, "base64");
+  return part.inlineData.mimeType?.includes("wav") ? raw : pcmWav(raw);
+}
+
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", version: "2.0.0" });
 });
 
-/**
- * In-Memory Cache for Voice Previews so preview clicks consume 0 live API calls after first fetch
- */
-const PREVIEW_AUDIO_CACHE = new Map<string, {
-  audioDataUrl: string;
-  audioBase64: string;
-  mimeType: string;
-  duration: number;
-  sampleText: string;
-  voiceName: string;
-}>();
+app.get("/api/settings", async (_req, res) => {
+  const snapshot = await db.doc("settings/global").get();
+  res.json({ settings: normalizeSettings(snapshot.data()) });
+});
 
-const VOICE_PREVIEW_SCRIPTS: Record<string, { name: string; script: string }> = {
-  khadija: {
-    name: 'خديجة',
-    script: 'السلام عليكم، أنا خديجة. الصوت الدافئ والطبيعي بالدارجة المغربية لأي محتوى كيعجبك.',
-  },
-  salma_ads: {
-    name: 'سلمى',
-    script: 'أهلاً! أنا سلمى، الصوت الإعلاني لي غادي يخلي إعلاناتك ومبيعاتك تفركع وتجيب زبناء جداد!',
-  },
-  zainab_promo: {
-    name: 'زينب',
-    script: 'سلام! أنا زينب، الصوت الأنيق لي كيعطي فخامة وجاذبية خاصة للمنتوجات والبراند ديالك.',
-  },
-  mariam: {
-    name: 'مريم',
-    script: 'مرحباً! أنا مريم، متخصصة في الشروحات والمحتوى التعليمي الواضح والمبسط بالدارجة.',
-  },
-  youssef: {
-    name: 'يوسف',
-    script: 'وا فين! أنا يوسف، صوت شبابي وحيوي كيهضر بنيشان لأي بودكاست أو محتوى معاصر.',
-  },
-  mehdi_ads: {
-    name: 'المهدي',
-    script: 'السلام عليكم! أنا المهدي، أقوى صوت حماسي للعروض والتخفيضات والإعلانات التجارية فالمغرب!',
-  },
-  amine: {
-    name: 'أمين',
-    script: 'مرحباً بكم، أنا أمين. الصوت الوقور والعميق للوثائقيات والقصص والتراث المغربي الأصيل.',
-  },
-  hamza: {
-    name: 'حمزة',
-    script: 'السلام عليكم، أنا حمزة. الصوت المتوازن والواضح للرسائل الصوتية والخدمات التفاعلية.',
-  },
-};
+app.post("/api/me/bootstrap", auth, async (req, res) => {
+  const ref = db.doc(`users/${req.actor!.uid}`);
+  const settingsRef = db.doc("settings/global");
 
-/**
- * Voice Preview Endpoint - Returns cached audio or synthesizes and caches it
- */
-app.get('/api/voices/preview/:voiceId', async (req, res) => {
-  const { voiceId } = req.params;
-  const previewInfo = VOICE_PREVIEW_SCRIPTS[voiceId] || {
-    name: voiceId,
-    script: 'السلام عليكم، مرحباً بك في استوديو صوت الدارجة المغربية.',
-  };
+  await db.runTransaction(async (tx) => {
+    const [snapshot, settingsSnapshot] = await Promise.all([
+      tx.get(ref),
+      tx.get(settingsRef),
+    ]);
+    const settings = normalizeSettings(settingsSnapshot.data());
 
-  // 1. Check in-memory cache first
-  if (PREVIEW_AUDIO_CACHE.has(voiceId)) {
-    const cached = PREVIEW_AUDIO_CACHE.get(voiceId)!;
+    if (!snapshot.exists) {
+      tx.create(ref, {
+        id: req.actor!.uid,
+        email: req.actor!.email,
+        displayName: req.actor!.email.split("@")[0],
+        role: req.actor!.admin ? "admin" : "user",
+        status: req.actor!.admin ? "active" : "pending",
+        tokens: req.actor!.admin ? 999999 : 0,
+        freeTrialsRemaining: req.actor!.admin
+          ? 999999
+          : settings.freeTrialsDefaultCount,
+        freeTrialMaxSeconds: settings.freeTrialMaxSeconds,
+        subscriptionTier: req.actor!.admin ? "unlimited" : "free",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } else if (!req.actor!.admin) {
+      const profile = snapshot.data();
+      const expired =
+        profile?.creditsExpireAt &&
+        new Date(profile.creditsExpireAt).getTime() <= Date.now();
+
+      if (expired && Number(profile?.tokens || 0) > 0) {
+        tx.update(ref, {
+          tokens: 0,
+          status: "pending",
+          subscriptionTier: "free",
+          creditsExpiredAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+  });
+
+  const [profile, settings] = await Promise.all([
+    ref.get(),
+    db.doc("settings/global").get(),
+  ]);
+
+  res.json({
+    profile: profile.data(),
+    settings: normalizeSettings(settings.data()),
+  });
+});
+
+app.post("/api/tts", auth, async (req, res) => {
+  const text = String(req.body.text || "").trim();
+  const voiceId = String(req.body.voiceId || "khadija");
+  const tone = String(req.body.toneDirective || "").slice(0, 300);
+
+  if (!text || text.length > 3000) {
+    return res.status(400).json({ error: "النص مطلوب وبحد أقصى 3000 حرف." });
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(VOICES, voiceId)) {
+    return res.status(400).json({ error: "الصوت غير موجود." });
+  }
+
+  const userRef = db.doc(`users/${req.actor!.uid}`);
+  const lockRef = db.doc(`generation_locks/${req.actor!.uid}`);
+  let trial = false;
+  let reserved = 0;
+  let maxSeconds = 300;
+  let settled = false;
+
+  try {
+    await db.runTransaction(async (tx) => {
+      const [userSnapshot, lockSnapshot] = await Promise.all([
+        tx.get(userRef),
+        tx.get(lockRef),
+      ]);
+      const profile = userSnapshot.data();
+
+      if (!profile) throw new Error("PROFILE");
+      if (profile.status === "suspended") throw new Error("SUSPENDED");
+      if (
+        !req.actor!.admin &&
+        profile.status === "active" &&
+        profile.creditsExpireAt &&
+        new Date(profile.creditsExpireAt).getTime() <= Date.now()
+      ) {
+        throw new Error("EXPIRED");
+      }
+      if (
+        lockSnapshot.exists &&
+        (lockSnapshot.data()?.expiresAt?.toMillis?.() || 0) > Date.now()
+      ) {
+        throw new Error("BUSY");
+      }
+
+      trial = profile.status !== "active" && !req.actor!.admin;
+
+      if (trial) {
+        if ((profile.freeTrialsRemaining || 0) <= 0) {
+          throw new Error("NO_TRIAL");
+        }
+        maxSeconds = profile.freeTrialMaxSeconds || 15;
+      } else {
+        reserved = Math.max(
+          5,
+          Math.ceil(text.length / 8) * (profile.tokensPerSecond || 10),
+        );
+
+        if (!req.actor!.admin && (profile.tokens || 0) < reserved) {
+          throw new Error("NO_CREDIT");
+        }
+
+        if (!req.actor!.admin) {
+          tx.update(userRef, { tokens: FieldValue.increment(-reserved) });
+        }
+      }
+
+      tx.set(lockRef, {
+        requestId: crypto.randomUUID(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 180000),
+      });
+    });
+
+    let wav = await synthesize(text, voiceId, tone);
+    const maxBytes = maxSeconds * 48000;
+
+    if (trial && wav.length > 44 + maxBytes) {
+      wav = pcmWav(wav.subarray(44, 44 + maxBytes));
+    }
+
+    const duration = Math.max(0.5, (wav.length - 44) / 48000);
+    const actual = Math.ceil(duration * 10);
+
+    await db.runTransaction(async (tx) => {
+      if (trial && !req.actor!.admin) {
+        tx.update(userRef, {
+          freeTrialsRemaining: FieldValue.increment(-1),
+          updatedAt: new Date().toISOString(),
+        });
+      } else if (!req.actor!.admin && reserved > actual) {
+        tx.update(userRef, {
+          tokens: FieldValue.increment(reserved - actual),
+          updatedAt: new Date().toISOString(),
+        });
+      } else if (!req.actor!.admin && actual > reserved) {
+        tx.update(userRef, {
+          tokens: FieldValue.increment(-(actual - reserved)),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      tx.delete(lockRef);
+      tx.set(db.collection("generations").doc(), {
+        userId: req.actor!.uid,
+        text: text.slice(0, 500),
+        voice: voiceId,
+        duration,
+        tokensUsed: trial ? 0 : actual,
+        isFreeTrial: trial,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    settled = true;
+    const audioBase64 = wav.toString("base64");
+
     return res.json({
       success: true,
-      cached: true,
-      ...cached,
+      audioDataUrl: `data:audio/wav;base64,${audioBase64}`,
+      audioBase64,
+      mimeType: "audio/wav",
+      duration,
+      vocalizedText: text,
+      tokensDeducted: trial ? 0 : actual,
     });
-  }
-
-  try {
-    const ai = getAiClient();
-    const voiceConfig = MOROCCAN_VOICE_MAP[voiceId] || {
-      geminiVoice: 'Kore',
-      styleGuide: 'Speak in warm, conversational Moroccan Darija accent.',
-    };
-
-    const prompt = `Persona Directive: ${voiceConfig.styleGuide}
-Dialect: Authentic Moroccan Arabic (الدارجة المغربية) with natural Moroccan cadence and pronunciation.
-Tone: Natural, authentic, welcoming voice intro.
-Text to speak:
-"${previewInfo.script}"`;
-
-    const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voiceConfig.geminiVoice },
-          },
-        },
-      },
-    });
-
-    const part = ttsResponse.candidates?.[0]?.content?.parts?.[0];
-    const rawAudioBase64 = part?.inlineData?.data;
-    const returnedMime = part?.inlineData?.mimeType || 'audio/pcm;rate=24000';
-
-    if (!rawAudioBase64) {
-      throw new Error('لم يتم استرجاع صوت المعاينة.');
+  } catch (error: any) {
+    if (!settled && reserved && !req.actor!.admin) {
+      await userRef
+        .update({ tokens: FieldValue.increment(reserved) })
+        .catch(() => {});
     }
 
-    const rawBuffer = Buffer.from(rawAudioBase64, 'base64');
-    const finalWavBuffer = (returnedMime.includes('pcm') || returnedMime.includes('rate=24000') || !returnedMime.includes('wav'))
-      ? pcmToWavBuffer(rawBuffer, 24000, 1, 16)
-      : rawBuffer;
+    await lockRef.delete().catch(() => {});
 
-    const audioBase64 = finalWavBuffer.toString('base64');
-    const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
-    const duration = Math.max(1, Number(((rawBuffer.length / 2) / 24000).toFixed(2)));
-
-    const result = {
-      audioDataUrl,
-      audioBase64,
-      mimeType: 'audio/wav',
-      duration,
-      sampleText: previewInfo.script,
-      voiceName: previewInfo.name,
+    const messages: Record<string, string> = {
+      PROFILE: "تعذر تحميل الحساب.",
+      NO_TRIAL: "سالاو التجارب المجانية.",
+      NO_CREDIT: "الرصيد غير كافٍ.",
+      BUSY: "كاين توليد آخر خدام دابا.",
+      SUSPENDED: "الحساب موقوف.",
+      EXPIRED: "صلاحية الرصيد سالات. شحن باقة جديدة باش تكمل.",
     };
 
-    // Store in cache so no further API calls needed for this voice preview
-    PREVIEW_AUDIO_CACHE.set(voiceId, result);
+    const known = Boolean(messages[error.message]);
+    if (!known) console.error("TTS generation failed:", error);
 
-    res.json({
+    return res.status(known ? 409 : 503).json({
+      error: messages[error.message] || "فشل توليد الصوت. حاول من جديد.",
+    });
+  }
+});
+
+const PREVIEW_VOICES = new Set(Object.keys(VOICES));
+const PREVIEW_TEXT = "السلام عليكم، مرحبا بك في صوت الدارجة المغربية.";
+const previewJobs = new Map<string, Promise<string>>();
+
+app.get("/api/voices/preview/:id", async (req, res) => {
+  const voiceId = String(req.params.id || "").trim();
+
+  if (!PREVIEW_VOICES.has(voiceId)) {
+    return res.status(404).json({ error: "الصوت غير موجود." });
+  }
+
+  res.set(
+    "Cache-Control",
+    "public, max-age=86400, stale-while-revalidate=604800",
+  );
+
+  try {
+    const ref = db.doc(`voice_previews/${voiceId}`);
+    const snapshot = await ref.get();
+    const cachedBase64 = snapshot.data()?.audioBase64;
+
+    if (typeof cachedBase64 === "string" && cachedBase64.length > 0) {
+      return res.json({
+        success: true,
+        cached: true,
+        audioDataUrl: `data:audio/wav;base64,${cachedBase64}`,
+      });
+    }
+
+    let job = previewJobs.get(voiceId);
+
+    if (!job) {
+      job = (async () => {
+        const wav = await synthesize(PREVIEW_TEXT, voiceId);
+        const audioBase64 = wav.toString("base64");
+
+        if (Buffer.byteLength(audioBase64, "utf8") > 900000) {
+          throw new Error("PREVIEW_TOO_LARGE");
+        }
+
+        await ref.set(
+          {
+            voiceId,
+            audioBase64,
+            mimeType: "audio/wav",
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        );
+
+        return audioBase64;
+      })().finally(() => {
+        previewJobs.delete(voiceId);
+      });
+
+      previewJobs.set(voiceId, job);
+    }
+
+    const audioBase64 = await job;
+
+    return res.json({
       success: true,
       cached: false,
-      ...result,
+      audioDataUrl: `data:audio/wav;base64,${audioBase64}`,
     });
-  } catch (error: any) {
-    console.error(`Error generating voice preview for ${voiceId}:`, error);
-    
-    // Check for Quota Exceeded (429)
-    const isQuotaError =
-      error?.status === 429 ||
-      error?.message?.includes('429') ||
-      error?.message?.includes('quota') ||
-      error?.message?.includes('RESOURCE_EXHAUSTED');
-
-    if (isQuotaError) {
-      return res.status(429).json({
-        success: false,
-        error: 'تم تجاوز الحد المجاني المسموح به في Google Gemini API (Quota Exceeded 429). يرجى الانتظار دقيقة أو الترقية.',
-        isQuotaError: true,
-        voiceId,
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      error: error.message || 'فشل في توليد معاينة الصوت.',
-    });
+  } catch (error) {
+    console.error("Voice preview failed:", error);
+    return res.status(503).json({ error: "المعاينة غير متاحة مؤقتاً." });
   }
 });
 
-/**
- * Text-to-Speech endpoint for Moroccan Darija
- */
-app.post('/api/tts', async (req, res) => {
-  try {
-    const {
-      text,
-      voiceId = 'khadija',
-      toneDirective,
-      optimizeDarija = true,
-      maxSecondsLimit, // e.g., 5 seconds for free trial cuts
-    } = req.body;
+const AI_DAILY_LIMITS: Record<string, number> = {
+  free: 3,
+  mini: 10,
+  starter: 20,
+  pro: 60,
+  business: 150,
+  unlimited: 500,
+};
 
-    if (!text || typeof text !== 'string' || !text.trim()) {
-      return res.status(400).json({ error: 'يرجى إدخال نص صحيح بالدارجة لتحويله إلى صوت.' });
+async function reserveAiToolUsage(
+  userId: string,
+  isAdmin: boolean,
+  tool: "arabizi" | "ad",
+) {
+  if (isAdmin) return null;
+
+  const day = new Date().toISOString().slice(0, 10);
+  const profileRef = db.doc(`users/${userId}`);
+  const usageRef = db.doc(`ai_tool_usage/${userId}_${day}_${tool}`);
+
+  await db.runTransaction(async (tx) => {
+    const [profileSnapshot, usageSnapshot] = await Promise.all([
+      tx.get(profileRef),
+      tx.get(usageRef),
+    ]);
+    const profile = profileSnapshot.data();
+
+    if (!profile) throw new Error("PROFILE");
+    if (profile.status === "suspended") throw new Error("SUSPENDED");
+
+    const tier = String(profile.subscriptionTier || "free");
+    const limit = AI_DAILY_LIMITS[tier] || AI_DAILY_LIMITS.free;
+    const count = Number(usageSnapshot.data()?.count || 0);
+
+    if (count >= limit) throw new Error("AI_LIMIT");
+
+    tx.set(
+      usageRef,
+      {
+        userId,
+        tool,
+        day,
+        tier,
+        limit,
+        count: count + 1,
+        updatedAt: new Date().toISOString(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 90 * 86400000),
+      },
+      { merge: true },
+    );
+  });
+
+  return usageRef;
+}
+
+async function refundAiToolUsage(ref: DocumentReference | null) {
+  if (!ref) return;
+
+  await ref
+    .update({
+      count: FieldValue.increment(-1),
+      updatedAt: new Date().toISOString(),
+    })
+    .catch(() => {});
+}
+
+app.post("/api/darija/convert-arabizi", auth, async (req, res) => {
+  const text = String(req.body.text || "")
+    .trim()
+    .slice(0, 1500);
+
+  if (!text) return res.status(400).json({ error: "النص مطلوب." });
+
+  let usageRef: DocumentReference | null = null;
+
+  try {
+    usageRef = await reserveAiToolUsage(
+      req.actor!.uid,
+      req.actor!.admin,
+      "arabizi",
+    );
+
+    const result = await ai().models.generateContent({
+      model: TEXT_MODEL,
+      contents:
+        "حوّل للدارجة المغربية بالحروف العربية، وأرجع JSON فيه " +
+        `arabicScript وenglishMeaning وculturalNote فقط:\n${text}`,
+      config: { responseMimeType: "application/json" },
+    });
+
+    return res.json({
+      success: true,
+      ...JSON.parse(result.text || "{}"),
+    });
+  } catch (error: any) {
+    await refundAiToolUsage(usageRef);
+
+    if (error.message === "AI_LIMIT") {
+      return res
+        .status(429)
+        .json({ error: "وصلتي للحد اليومي ديال هاد الأداة." });
     }
 
-    const ai = getAiClient();
-    const rawText = text.trim();
-    let speechText = rawText;
-    let vocalizedScript = rawText;
+    if (error.message === "SUSPENDED") {
+      return res.status(403).json({ error: "الحساب موقوف." });
+    }
 
-    const voiceConfig = MOROCCAN_VOICE_MAP[voiceId] || {
-      geminiVoice: 'Kore',
-      styleGuide: 'Speak in warm, conversational Moroccan Darija accent.',
-    };
+    console.error("Arabizi conversion failed:", error);
+    return res.status(503).json({ error: "تعذر تحويل النص مؤقتاً." });
+  }
+});
 
-    // Detect if text contains Arabizi (Latin characters with numbers like 3, 7, 9)
-    const hasArabizi = /[a-zA-Z]/.test(rawText);
-    
-    // Only call extra LLM text refinement if text contains Arabizi/Latin, saving 50% quota for regular Arabic script
-    if (hasArabizi) {
-      try {
-        const refinePrompt = `You are a world-class Moroccan voiceover director and linguist in Moroccan Arabic (الدارجة المغربية).
-Given this text provided by a user:
-"""${rawText}"""
+app.post("/api/darija/generate-ad-script", auth, async (req, res) => {
+  const description = String(req.body.productDescription || "")
+    .trim()
+    .slice(0, 1500);
 
-Task:
-1. Convert any Arabizi (e.g. "salam labas 3lik") accurately into Moroccan Arabic script.
-2. Polish the text so it sounds 100% natural when read aloud in Moroccan Darija, preserving all idioms (like بزاف، دابا، عفاك، كيداير، مزيان، برودوي، تخفيضات).
-3. Strictly keep it in authentic Moroccan Darija (DO NOT convert to MSA/Fusha).
+  if (!description) {
+    return res.status(400).json({ error: "وصف المنتج مطلوب." });
+  }
 
-Return ONLY the refined Moroccan Darija text.`;
+  let usageRef: DocumentReference | null = null;
 
-        const refineResp = await ai.models.generateContent({
-          model: 'gemini-3.7-flash',
-          contents: refinePrompt,
+  try {
+    usageRef = await reserveAiToolUsage(req.actor!.uid, req.actor!.admin, "ad");
+
+    const result = await ai().models.generateContent({
+      model: TEXT_MODEL,
+      contents:
+        "اكتب إعلاناً قصيراً مقنعاً بالدارجة المغربية للمنتج: " +
+        `${description}. أرجع JSON فقط فيه: ` +
+        "title, script, voiceRecommendation, hook",
+      config: { responseMimeType: "application/json" },
+    });
+
+    return res.json({
+      success: true,
+      ...JSON.parse(result.text || "{}"),
+    });
+  } catch (error: any) {
+    await refundAiToolUsage(usageRef);
+
+    if (error.message === "AI_LIMIT") {
+      return res
+        .status(429)
+        .json({ error: "وصلتي للحد اليومي ديال هاد الأداة." });
+    }
+
+    if (error.message === "SUSPENDED") {
+      return res.status(403).json({ error: "الحساب موقوف." });
+    }
+
+    console.error("Ad generation failed:", error);
+    return res.status(503).json({ error: "تعذر إنشاء الإعلان مؤقتاً." });
+  }
+});
+
+app.post("/api/subscriptions", auth, async (req, res) => {
+  const id = String(req.body.planId || "") as keyof typeof PLANS;
+  const plan = PLANS[id];
+
+  if (!plan) return res.status(400).json({ error: "الباقة غير صحيحة." });
+
+  const settingsSnapshot = await db.doc("settings/global").get();
+  const settings = normalizeSettings(settingsSnapshot.data());
+  const priceSettingKey = `${id}PriceMAD`;
+  const configuredPrice = Number(
+    (settings as Record<string, unknown>)[priceSettingKey],
+  );
+  const priceMAD =
+    Number.isFinite(configuredPrice) && configuredPrice > 0
+      ? configuredPrice
+      : plan.priceMAD;
+
+  const existing = await db
+    .collection("subscription_requests")
+    .where("userId", "==", req.actor!.uid)
+    .where("status", "==", "pending")
+    .limit(1)
+    .get();
+
+  if (!existing.empty) {
+    return res.status(409).json({ error: "عندك طلب قيد المراجعة." });
+  }
+
+  const ref = db.collection("subscription_requests").doc();
+  const profile = (await db.doc(`users/${req.actor!.uid}`).get()).data();
+  const data = {
+    id: ref.id,
+    userId: req.actor!.uid,
+    userEmail: req.actor!.email,
+    userName: profile?.displayName || req.actor!.email.split("@")[0],
+    planName: plan.name,
+    planTier: id,
+    priceMAD,
+    tokensCount: plan.tokensCount,
+    includedMinutes: plan.includedMinutes,
+    validityMonths: plan.validityMonths,
+    serverValidated: true,
+    commercialSettingsVersion: 2,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
+
+  await ref.set(data);
+  res.json({ success: true, request: data });
+});
+
+app.get("/api/subscriptions", auth, admin, async (_req, res) => {
+  const query = await db
+    .collection("subscription_requests")
+    .orderBy("createdAt", "desc")
+    .limit(200)
+    .get();
+
+  res.json({ requests: query.docs.map((doc) => doc.data()) });
+});
+
+app.patch("/api/subscriptions/:id", auth, admin, async (req, res) => {
+  const status = String(req.body.status);
+
+  if (!["approved", "rejected"].includes(status)) {
+    return res.status(400).json({ error: "حالة غير صحيحة" });
+  }
+
+  const ref = db.doc(`subscription_requests/${req.params.id}`);
+
+  try {
+    await db.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      const request = snapshot.data();
+
+      if (!request || request.status !== "pending") {
+        throw new Error("ALREADY_PROCESSED");
+      }
+
+      const approvedPlan = PLANS[request.planTier as keyof typeof PLANS];
+      if (!approvedPlan) throw new Error("INVALID_PLAN");
+
+      const now = new Date().toISOString();
+      let approvalUpdates: Record<string, unknown> = {};
+
+      if (status === "approved") {
+        const userRef = db.doc(`users/${request.userId}`);
+        const settingsRef = db.doc("settings/global");
+        const [userSnapshot, settingsSnapshot] = await Promise.all([
+          tx.get(userRef),
+          tx.get(settingsRef),
+        ]);
+        const user = userSnapshot.data();
+        if (!user) throw new Error("USER_NOT_FOUND");
+
+        const settings = normalizeSettings(settingsSnapshot.data());
+        const planTokens = request.serverValidated
+          ? Number(request.tokensCount || approvedPlan.tokensCount)
+          : approvedPlan.tokensCount;
+        const planMinutes = request.serverValidated
+          ? Number(request.includedMinutes || approvedPlan.includedMinutes)
+          : approvedPlan.includedMinutes;
+        const validityMonths = request.serverValidated
+          ? Number(request.validityMonths || approvedPlan.validityMonths)
+          : approvedPlan.validityMonths;
+
+        const bonusAvailable =
+          settings.launchBonusEnabled === true &&
+          !user.launchBonusGrantedAt &&
+          Number(settings.launchBonusClaimedCount || 0) <
+            Number(settings.launchBonusLimit || 100);
+        const bonusMinutes = bonusAvailable
+          ? Number(settings.launchBonusMinutes || 10)
+          : 0;
+        const bonusTokens = bonusMinutes * 60 * DEFAULT_SETTINGS.tokensPerSecond;
+
+        const oldExpiryMs = new Date(user.creditsExpireAt || 0).getTime();
+        const oldBalanceValid =
+          Number.isFinite(oldExpiryMs) && oldExpiryMs > Date.now();
+        const baseTokens = oldBalanceValid ? Number(user.tokens || 0) : 0;
+        const candidateExpiryMs = new Date(addMonthsIso(validityMonths)).getTime();
+        const creditsExpireAt = new Date(
+          Math.max(oldBalanceValid ? oldExpiryMs : 0, candidateExpiryMs),
+        ).toISOString();
+
+        tx.update(userRef, {
+          status: "active",
+          subscriptionTier: request.planTier,
+          tokens: baseTokens + planTokens + bonusTokens,
+          creditsExpireAt,
+          ...(bonusAvailable
+            ? {
+                launchBonusGrantedAt: now,
+                launchBonusMinutes: bonusMinutes,
+              }
+            : {}),
+          updatedAt: now,
         });
 
-        if (refineResp.text && refineResp.text.trim()) {
-          vocalizedScript = refineResp.text.trim().replace(/^["']|["']$/g, '');
-          speechText = vocalizedScript;
+        if (bonusAvailable) {
+          const migratingLegacySettings =
+            Number(settingsSnapshot.data()?.commercialSettingsVersion || 0) < 2;
+          tx.set(
+            settingsRef,
+            {
+              ...(migratingLegacySettings
+                ? {
+                    freeTrialsDefaultCount: 2,
+                    freeTrialMaxSeconds: 15,
+                    miniPriceMAD: 59,
+                    starterPriceMAD: 99,
+                    proPriceMAD: 199,
+                    businessPriceMAD: 599,
+                    launchBonusEnabled: true,
+                    launchBonusLimit: 100,
+                    launchBonusMinutes: 10,
+                  }
+                : {}),
+              launchBonusClaimedCount:
+                Number(settings.launchBonusClaimedCount || 0) + 1,
+              commercialSettingsVersion: 2,
+              updatedAt: now,
+            },
+            { merge: true },
+          );
         }
-      } catch (optErr) {
-        console.warn('Vocalization optimization skipped:', optErr);
+
+        approvalUpdates = {
+          tokensCount: planTokens,
+          includedMinutes: planMinutes,
+          validityMonths,
+          bonusMinutesApplied: bonusMinutes,
+          tokensAdded: planTokens + bonusTokens,
+        };
       }
-    }
 
-    // Build speech prompt with explicit Moroccan intonation instructions
-    const prompt = `Persona Directive: ${voiceConfig.styleGuide}
-Dialect: Authentic Moroccan Arabic (الدارجة المغربية) with natural Moroccan cadence and pronunciation.
-${toneDirective ? `Tone / Intonation Style: ${toneDirective}\n` : 'Tone: Engaging, professional Moroccan voiceover.\n'}
-Text to speak in authentic Moroccan Darija:
-"${speechText}"`;
-
-    const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voiceConfig.geminiVoice },
-          },
-        },
-      },
-    });
-
-    const part = ttsResponse.candidates?.[0]?.content?.parts?.[0];
-    const rawAudioBase64 = part?.inlineData?.data;
-    const returnedMime = part?.inlineData?.mimeType || 'audio/pcm;rate=24000';
-
-    if (!rawAudioBase64) {
-      throw new Error('لم نتمكن من استخراج الصوت المولد من النموذج.');
-    }
-
-    // Process audio buffer: if raw PCM or contains PCM, wrap in standard WAV header
-    let rawBuffer = Buffer.from(rawAudioBase64, 'base64');
-
-    // Apply Free Trial seconds cut if requested (e.g. 5 seconds max)
-    const bytesPerSecond = 24000 * 2; // 24000 samples/sec * 2 bytes per 16-bit sample
-    if (maxSecondsLimit && maxSecondsLimit > 0) {
-      const maxBytes = Math.floor(maxSecondsLimit * bytesPerSecond);
-      if (rawBuffer.length > maxBytes) {
-        rawBuffer = rawBuffer.subarray(0, maxBytes);
-      }
-    }
-
-    let finalWavBuffer: Buffer;
-    let finalMime = 'audio/wav';
-
-    if (returnedMime.includes('pcm') || returnedMime.includes('rate=24000') || !returnedMime.includes('wav') || maxSecondsLimit) {
-      finalWavBuffer = pcmToWavBuffer(rawBuffer, 24000, 1, 16);
-    } else {
-      finalWavBuffer = rawBuffer;
-      finalMime = returnedMime;
-    }
-
-    const audioBase64 = finalWavBuffer.toString('base64');
-    const audioDataUrl = `data:${finalMime};base64,${audioBase64}`;
-
-    // Estimated duration: (samples) / 24000 = (data bytes / 2) / 24000
-    const estimatedDuration = Math.max(0.5, Number(((rawBuffer.length / 2) / 24000).toFixed(2)));
-
-    res.json({
-      success: true,
-      audioDataUrl,
-      audioBase64,
-      mimeType: finalMime,
-      duration: estimatedDuration,
-      sampleRate: 24000,
-      vocalizedText: vocalizedScript,
-      originalText: rawText,
-      voice: voiceId,
-    });
-  } catch (error: any) {
-    console.error('Error generating Darija TTS:', error);
-    
-    // Check for Quota Exceeded (429)
-    const isQuotaError =
-      error?.status === 429 ||
-      error?.message?.includes('429') ||
-      error?.message?.includes('quota') ||
-      error?.message?.includes('RESOURCE_EXHAUSTED') ||
-      error?.message?.includes('exceeded your current quota');
-
-    if (isQuotaError) {
-      return res.status(429).json({
-        success: false,
-        error: '⚠️ تم استهلاك الحد الأقصى للطلبات المجانية في باقة Gemini API (429 Rate Limit). يرجى الانتظار لبضع ثوانٍ أو دقيقة والمحاولة من جديد، أو استخدام مفتاح API مع باقة Pay-As-You-Go.',
-        isQuotaError: true,
+      tx.update(ref, {
+        ...approvalUpdates,
+        status,
+        updatedAt: now,
+        approvedAt: status === "approved" ? now : null,
+        approvedBy: req.actor!.uid,
       });
-    }
 
-    res.status(500).json({
-      error: error.message || 'حدث خطأ أثناء توليد الصوت بالدارجة. يرجى المحاولة مرة أخرى.',
+      tx.set(db.collection("audit_logs").doc(), {
+        action: `subscription_${status}`,
+        requestId: req.params.id,
+        adminId: req.actor!.uid,
+        createdAt: now,
+      });
     });
-  }
-});
-
-/**
- * Generate High-Converting Moroccan Ad Script (AI Copywriter for Voiceover)
- */
-app.post('/api/darija/generate-ad-script', async (req, res) => {
-  try {
-    const { productDescription, targetAudience = 'Moroccan social media shoppers' } = req.body;
-    if (!productDescription) {
-      return res.status(400).json({ error: 'المرجو إدخال وصف للمنتوج أو الخدمة.' });
-    }
-
-    const ai = getAiClient();
-    const prompt = `You are a high-converting Moroccan E-Commerce and Marketing Copywriter.
-Create a catchy, compelling, high-energy 15-30 second Moroccan Darija voiceover script for an ad targeting TikTok, Instagram Reels, and Facebook ads.
-
-Product / Offer: "${productDescription}"
-Target Audience: "${targetAudience}"
-
-Rules:
-- Must be written in 100% natural, modern, persuasive Moroccan Darija.
-- Include a strong hook (صدمة أو سؤال جذاب فاللول).
-- Highlight the problem and solution clearly.
-- Include a high-converting call to action (توصيل فابور، الدفع عند الاستلام، الكمية محدودة، كليكي على الرابط).
-- Return ONLY a JSON object:
-{
-  "title": "عنوان الإعلان المقترح",
-  "script": "نص الإعلان بالدارجة المغربية جاهز للقراءة والتسجيل",
-  "voiceRecommendation": "salma_ads" or "mehdi_ads",
-  "hook": "الجملة الافتتاحية الجذابة"
-}`;
-
-    const resp = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json' },
-    });
-
-    const parsed = JSON.parse(resp.text || '{}');
-    res.json({ success: true, ...parsed });
   } catch (error: any) {
-    console.error('Error generating ad script:', error);
-    res.status(500).json({ error: 'فشل في توليد نص الإعلان.' });
-  }
-});
-
-/**
- * Translate / Transliterate Arabizi or Franco-Arabe to Darija text
- */
-app.post('/api/darija/convert-arabizi', async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'المرجو كتابة النص المطلوب تحويله.' });
+    if (error.message === "ALREADY_PROCESSED") {
+      return res.status(409).json({ error: "هاد الطلب سبق تعالج." });
     }
-
-    const ai = getAiClient();
-    const prompt = `Convert the following Moroccan Arabizi / Franco-Arabe text into proper Arabic script Moroccan Darija (الدارجة المغربية):
-Text: "${text}"
-
-Rules:
-- Keep the exact Darija vocabulary (e.g., 3 -> ع, 7 -> ح, 9 -> ق, kh -> خ, gh -> غ, ch -> ش).
-- Maintain Moroccan dialect idioms and phrases.
-- Return a JSON object with:
-  {
-    "arabicScript": "the converted Darija text in Arabic alphabet",
-    "englishMeaning": "quick explanation",
-    "culturalNote": "short note"
-  }`;
-
-    const resp = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
-
-    const parsed = JSON.parse(resp.text || '{}');
-    res.json({ success: true, ...parsed });
-  } catch (error: any) {
-    console.error('Error converting Arabizi:', error);
-    res.status(500).json({ error: 'فشل في تحويل النص. يرجى المحاولة لاحقاً.' });
-  }
-});
-
-/**
- * In-Memory & Resilient Server Storage for Customer Reviews
- */
-let storedReviews: Array<{
-  id: string;
-  name: string;
-  role: string;
-  rating: number;
-  comment: string;
-  verified: boolean;
-  isVisible: boolean;
-  createdAt: string;
-}> = [
-  {
-    id: 'rev_1',
-    name: 'أمين البرنوصي',
-    role: 'صاحب متجر E-commerce وDropshipping',
-    rating: 5,
-    comment: 'صراحة صوت سلمى الإعلاني بدل ليا خدمة الفيديو كاملة! خدمت بيه 4 إعلانات فـ TikTok Ads ونتائج المبيعات كانت هربانة بلا ما نبقى نخلص فويس أوفر على كل فيديو.',
-    verified: true,
-    isVisible: true,
-    createdAt: 'منذ يومين',
-  },
-  {
-    id: 'rev_2',
-    name: 'مريم التازي',
-    role: 'صانعة محتوى وReels Creator',
-    rating: 5,
-    comment: 'نطق الدارجة طبيعي بزاف وحتى الكلمات الصعبة كينطقهم مقادين بلا لحن روبوتي. باقة Pro وافية ومكفية ونفعتني بزاف فالسوشيال ميديا.',
-    verified: true,
-    isVisible: true,
-    createdAt: 'منذ 4 أيام',
-  },
-  {
-    id: 'rev_3',
-    name: 'ياسين المهدوي',
-    role: 'Media Buyer ووكالة تسويق رقمي',
-    rating: 5,
-    comment: 'السرعة فالتوليد وجودة الـ WAV نقية بزاف. كنوفر أسبوع ديال التسجيل والتعديل فـ 5 ثواني فقط. منصة مغربية نفتخرو بيها 👏',
-    verified: true,
-    isVisible: true,
-    createdAt: 'منذ أسبوع',
-  },
-  {
-    id: 'rev_4',
-    name: 'حمزة الشاوي',
-    role: 'قناة بودكاست وشروحات يوتيوب',
-    rating: 5,
-    comment: 'صوت أنس وخديجة ممتاز فالشروحات والمقالات الطويلة. تفعيل النقاط كان فوري عبر الواتساب والدعم الفني متجاوبين وسريعين.',
-    verified: true,
-    isVisible: true,
-    createdAt: 'منذ أسبوعين',
-  },
-];
-
-app.get('/api/subscriptions', handleGetSubscriptions);
-app.post('/api/subscriptions', handleCreateSubscription);
-app.patch('/api/subscriptions/:id', handleUpdateSubscriptionStatus);
-app.delete('/api/subscriptions/:id', handleDeleteSubscription);
-
-app.get('/api/reviews', (req, res) => {
-  res.json({ success: true, reviews: storedReviews });
-});
-
-app.post('/api/reviews', (req, res) => {
-  try {
-    const { name, role, rating, comment, verified } = req.body;
-    if (!name || !comment) {
-      return res.status(400).json({ error: 'الاسم والتعليق مطلوبان.' });
+    if (error.message === "INVALID_PLAN") {
+      return res
+        .status(400)
+        .json({ error: "الباقة المسجلة فالطلب غير صحيحة." });
     }
-    const newReview = {
-      id: `rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      name: String(name).trim(),
-      role: String(role || 'مستخدم المنصة').trim(),
-      rating: Number(rating) || 5,
-      comment: String(comment).trim(),
-      verified: Boolean(verified),
-      isVisible: true,
-      createdAt: 'الآن',
+    if (error.message === "USER_NOT_FOUND") {
+      return res.status(404).json({ error: "الحساب المرتبط بالطلب غير موجود." });
+    }
+    throw error;
+  }
+
+  res.json({ success: true });
+});
+
+app.delete("/api/subscriptions/:id", auth, admin, async (req, res) => {
+  const requestId = String(req.params.id || "");
+  const batch = db.batch();
+  batch.delete(db.doc(`subscription_requests/${requestId}`));
+  batch.set(db.collection("audit_logs").doc(), {
+    action: "subscription_deleted",
+    requestId,
+    adminId: req.actor!.uid,
+    createdAt: new Date().toISOString(),
+  });
+  await batch.commit();
+  res.json({ success: true });
+});
+
+function validDocumentId(value: string) {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+app.patch("/api/admin/users/:id/status", auth, admin, async (req, res) => {
+  const userId = String(req.params.id || "");
+  const status = String(req.body.status || "");
+
+  if (
+    !validDocumentId(userId) ||
+    !["pending", "active", "suspended"].includes(status)
+  ) {
+    return res.status(400).json({ error: "بيانات الحساب غير صحيحة." });
+  }
+
+  const userRef = db.doc(`users/${userId}`);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists)
+    return res.status(404).json({ error: "الحساب غير موجود." });
+
+  const now = new Date().toISOString();
+  const batch = db.batch();
+  batch.update(userRef, { status, updatedAt: now });
+  batch.set(db.collection("audit_logs").doc(), {
+    action: "user_status_changed",
+    userId,
+    status,
+    adminId: req.actor!.uid,
+    createdAt: now,
+  });
+  await batch.commit();
+  return res.json({ success: true });
+});
+
+app.patch("/api/admin/users/:id/tokens", auth, admin, async (req, res) => {
+  const userId = String(req.params.id || "");
+  const amount = Number(req.body.amount);
+
+  if (
+    !validDocumentId(userId) ||
+    !Number.isSafeInteger(amount) ||
+    amount <= 0 ||
+    amount > 10_000_000
+  ) {
+    return res.status(400).json({ error: "قيمة الشحن غير صحيحة." });
+  }
+
+  const userRef = db.doc(`users/${userId}`);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists)
+    return res.status(404).json({ error: "الحساب غير موجود." });
+
+  const now = new Date().toISOString();
+  const profile = snapshot.data();
+  const oldExpiryMs = new Date(profile?.creditsExpireAt || 0).getTime();
+  const oldBalanceValid = Number.isFinite(oldExpiryMs) && oldExpiryMs > Date.now();
+  const baseTokens = oldBalanceValid ? Number(profile?.tokens || 0) : 0;
+  const creditsExpireAt = new Date(
+    Math.max(oldBalanceValid ? oldExpiryMs : 0, new Date(addMonthsIso(6)).getTime()),
+  ).toISOString();
+  const batch = db.batch();
+  batch.update(userRef, {
+    tokens: baseTokens + amount,
+    status: "active",
+    creditsExpireAt,
+    updatedAt: now,
+  });
+  batch.set(db.collection("audit_logs").doc(), {
+    action: "tokens_added",
+    userId,
+    amount,
+    adminId: req.actor!.uid,
+    createdAt: now,
+  });
+  await batch.commit();
+  return res.json({ success: true });
+});
+
+app.patch("/api/admin/users/:id/tier", auth, admin, async (req, res) => {
+  const userId = String(req.params.id || "");
+  const tier = String(req.body.tier || "");
+  const allowedTiers = new Set([
+    "free",
+    "mini",
+    "starter",
+    "pro",
+    "business",
+    "unlimited",
+  ]);
+
+  if (!validDocumentId(userId) || !allowedTiers.has(tier)) {
+    return res.status(400).json({ error: "الباقة غير صحيحة." });
+  }
+
+  const userRef = db.doc(`users/${userId}`);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists)
+    return res.status(404).json({ error: "الحساب غير موجود." });
+
+  const tokens =
+    tier === "free"
+      ? 0
+      : tier === "unlimited"
+        ? 999999
+        : PLANS[tier as keyof typeof PLANS].tokensCount;
+  const validityMonths =
+    tier === "free" || tier === "unlimited"
+      ? 0
+      : PLANS[tier as keyof typeof PLANS].validityMonths;
+  const now = new Date().toISOString();
+  const batch = db.batch();
+  batch.update(userRef, {
+    subscriptionTier: tier,
+    status: tier === "free" ? "pending" : "active",
+    tokens,
+    freeTrialsRemaining:
+      tier === "free" ? DEFAULT_SETTINGS.freeTrialsDefaultCount : 0,
+    creditsExpireAt:
+      tier === "free" || tier === "unlimited"
+        ? null
+        : addMonthsIso(validityMonths),
+    updatedAt: now,
+  });
+  batch.set(db.collection("audit_logs").doc(), {
+    action: "user_tier_changed",
+    userId,
+    tier,
+    tokens,
+    adminId: req.actor!.uid,
+    createdAt: now,
+  });
+  await batch.commit();
+  return res.json({ success: true });
+});
+
+app.patch("/api/admin/settings", auth, admin, async (req, res) => {
+  const settingsRef = db.doc("settings/global");
+  const currentSettings = normalizeSettings((await settingsRef.get()).data());
+  const numeric = (
+    name: string,
+    fallback: number,
+    min: number,
+    max: number,
+  ) => {
+    const value = Number(req.body[name] ?? fallback);
+    if (!Number.isFinite(value) || value < min || value > max) {
+      throw new Error("INVALID_SETTINGS");
+    }
+    return value;
+  };
+
+  try {
+    const settings = {
+      freeTrialsDefaultCount: numeric("freeTrialsDefaultCount", 2, 0, 10),
+      freeTrialMaxSeconds: numeric("freeTrialMaxSeconds", 15, 1, 30),
+      tokensPerSecond: numeric("tokensPerSecond", 10, 1, 100),
+      contactWhatsApp: String(req.body.contactWhatsApp || "")
+        .trim()
+        .slice(0, 30),
+      paymentInstructions: String(req.body.paymentInstructions || "")
+        .trim()
+        .slice(0, 1000),
+      miniPriceMAD: numeric("miniPriceMAD", 59, 1, 10000),
+      starterPriceMAD: numeric("starterPriceMAD", 99, 1, 10000),
+      proPriceMAD: numeric("proPriceMAD", 199, 1, 10000),
+      businessPriceMAD: numeric("businessPriceMAD", 599, 1, 10000),
+      launchBonusEnabled: req.body.launchBonusEnabled !== false,
+      launchBonusLimit: numeric("launchBonusLimit", 100, 1, 10000),
+      launchBonusMinutes: numeric("launchBonusMinutes", 10, 0, 120),
+      launchBonusClaimedCount: Number(
+        currentSettings.launchBonusClaimedCount || 0,
+      ),
+      commercialSettingsVersion: 2,
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.actor!.uid,
     };
-    storedReviews.unshift(newReview);
-    res.json({ success: true, review: newReview, reviews: storedReviews });
+
+    if (
+      !/^\+?[0-9]{8,15}$/.test(settings.contactWhatsApp.replace(/[\s-]/g, ""))
+    ) {
+      return res.status(400).json({ error: "رقم الواتساب غير صحيح." });
+    }
+
+    const batch = db.batch();
+    batch.set(settingsRef, settings, { merge: true });
+    batch.set(db.collection("audit_logs").doc(), {
+      action: "settings_updated",
+      adminId: req.actor!.uid,
+      createdAt: settings.updatedAt,
+    });
+    await batch.commit();
+    return res.json({ success: true, settings });
   } catch (error: any) {
-    res.status(500).json({ error: 'تعذر حفظ التقييم.' });
+    if (error.message === "INVALID_SETTINGS") {
+      return res.status(400).json({ error: "قيم الإعدادات غير صحيحة." });
+    }
+    throw error;
   }
 });
 
-app.patch('/api/reviews/:id', (req, res) => {
-  const { id } = req.params;
-  const { isVisible } = req.body;
-  const found = storedReviews.find((r) => r.id === id);
-  if (found) {
-    found.isVisible = isVisible !== undefined ? Boolean(isVisible) : !found.isVisible;
-    return res.json({ success: true, review: found, reviews: storedReviews });
+app.get("/api/reviews", async (_req, res) => {
+  const query = await db
+    .collection("reviews")
+    .where("isVisible", "==", true)
+    .where("moderationStatus", "==", "approved")
+    .limit(50)
+    .get();
+
+  const reviews = query.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .sort((a: any, b: any) =>
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+    );
+
+  res.json({ reviews });
+});
+
+app.post("/api/reviews", auth, async (req, res) => {
+  const name = String(req.body.name || "")
+    .trim()
+    .slice(0, 80);
+  const comment = String(req.body.comment || "")
+    .trim()
+    .slice(0, 800);
+
+  if (!name || !comment) {
+    return res.status(400).json({ error: "الاسم والتعليق مطلوبان." });
   }
-  res.status(404).json({ error: 'التقييم غير موجود.' });
+
+  const duplicate = await db
+    .collection("reviews")
+    .where("userId", "==", req.actor!.uid)
+    .limit(1)
+    .get();
+
+  if (!duplicate.empty && !req.actor!.admin) {
+    return res.status(409).json({ error: "سبق ليك رسلتي تقييماً للمراجعة." });
+  }
+
+  const ref = db.collection("reviews").doc();
+  const data = {
+    name,
+    role: String(req.body.role || "مستخدم المنصة").slice(0, 100),
+    rating: Math.min(5, Math.max(1, Number(req.body.rating) || 5)),
+    comment,
+    verified: true,
+    isVisible: false,
+    moderationStatus: "pending",
+    userId: req.actor!.uid,
+    createdAt: new Date().toISOString(),
+  };
+
+  await ref.set(data);
+  res.json({ success: true, review: { id: ref.id, ...data } });
 });
 
-app.delete('/api/reviews/:id', (req, res) => {
-  const { id } = req.params;
-  storedReviews = storedReviews.filter((r) => r.id !== id);
-  res.json({ success: true, reviews: storedReviews });
+app.patch("/api/reviews/:id", auth, admin, async (req, res) => {
+  if (typeof req.body.isVisible !== "boolean") {
+    return res.status(400).json({ error: "حالة التقييم غير صحيحة." });
+  }
+
+  const reviewId = String(req.params.id || "");
+  const reviewRef = db.doc(`reviews/${reviewId}`);
+  const snapshot = await reviewRef.get();
+
+  if (!snapshot.exists) {
+    return res.status(404).json({ error: "التقييم غير موجود." });
+  }
+
+  const isVisible = req.body.isVisible;
+  const now = new Date().toISOString();
+  const batch = db.batch();
+
+  batch.update(reviewRef, {
+    isVisible,
+    moderationStatus: isVisible ? "approved" : "hidden",
+    updatedAt: now,
+    moderatedBy: req.actor!.uid,
+  });
+
+  batch.set(db.collection("audit_logs").doc(), {
+    action: isVisible ? "review_approved" : "review_hidden",
+    reviewId,
+    adminId: req.actor!.uid,
+    createdAt: now,
+  });
+
+  await batch.commit();
+
+  return res.json({ success: true });
 });
 
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+app.delete("/api/reviews/:id", auth, admin, async (req, res) => {
+  const reviewId = String(req.params.id || "");
+  const reviewRef = db.doc(`reviews/${reviewId}`);
+  const snapshot = await reviewRef.get();
+
+  if (!snapshot.exists) {
+    return res.status(404).json({ error: "التقييم غير موجود." });
+  }
+
+  const batch = db.batch();
+
+  batch.delete(reviewRef);
+
+  batch.set(db.collection("audit_logs").doc(), {
+    action: "review_deleted",
+    reviewId,
+    adminId: req.actor!.uid,
+    createdAt: new Date().toISOString(),
+  });
+
+  await batch.commit();
+
+  return res.json({ success: true });
+});
+async function start() {
+  if (process.env.NODE_ENV === "production") {
+    if (!origins.size) {
+      throw new Error("ALLOWED_ORIGINS is required in production");
+    }
+
+    const dist = path.join(process.cwd(), "dist");
+    app.use(
+      express.static(dist, {
+        index: false,
+        maxAge: "1h",
+        setHeaders: (res, filePath) => {
+          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader(
+              "Cache-Control",
+              "public, max-age=31536000, immutable",
+            );
+          } else if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-store");
+          }
+        },
+      }),
+    );
+    app.get("/{*splat}", (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.sendFile(path.join(dist, "index.html"));
+    });
+  } else {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Darija TTS Commercial Engine running at http://0.0.0.0:${PORT}`);
+  app.use(
+    (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+      console.error("Unhandled request error:", error);
+      if (res.headersSent) return next(error);
+      return res.status(500).json({ error: "وقع خطأ داخلي مؤقت." });
+    },
+  );
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`DarijaVoice listening on ${PORT}`);
   });
 }
 
-startServer();
+start().catch((error) => {
+  console.error("Failed to start DarijaVoice:", error);
+  process.exit(1);
+});

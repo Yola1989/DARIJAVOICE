@@ -1,5 +1,13 @@
-import React, { useState } from 'react';
-import { Languages, ArrowRight, Check, Sparkles, Loader2, X } from 'lucide-react';
+import React, { useState } from "react";
+import {
+  Languages,
+  ArrowRight,
+  Check,
+  Sparkles,
+  Loader2,
+  X,
+} from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 interface ArabiziConverterModalProps {
   isOpen: boolean;
@@ -12,7 +20,7 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
   onClose,
   onApplyText,
 }) => {
-  const [arabiziInput, setArabiziInput] = useState('');
+  const [arabiziInput, setArabiziInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [convertedResult, setConvertedResult] = useState<{
     arabicScript?: string;
@@ -28,18 +36,17 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch('/api/darija/convert-arabizi', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const data = await apiFetch<{
+        arabicScript?: string;
+        englishMeaning?: string;
+        culturalNote?: string;
+      }>("/api/darija/convert-arabizi", {
+        method: "POST",
         body: JSON.stringify({ text: arabiziInput }),
       });
-      const data = await resp.json();
-      if (!resp.ok || data.error) {
-        throw new Error(data.error || 'حدث خطأ أثناء التحويل.');
-      }
       setConvertedResult(data);
     } catch (err: any) {
-      setError(err.message || 'فشل في الاتصال بالسيرفر.');
+      setError(err.message || "فشل في الاتصال بالسيرفر.");
     } finally {
       setLoading(false);
     }
@@ -53,11 +60,11 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
   };
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto"
       onClick={onClose}
     >
-      <div 
+      <div
         className="bg-stone-900 border border-stone-800 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden shadow-2xl p-5 sm:p-6 relative my-auto text-right"
         onClick={(e) => e.stopPropagation()}
       >
@@ -77,8 +84,12 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
               <Languages className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-stone-100">محول العرنسية (Arabizi / Franco)</h3>
-              <p className="text-xs text-stone-400">تحويل الحروف اللاتينية والأرقام (3, 7, 9) إلى دارجة مغربية عربية</p>
+              <h3 className="text-base font-bold text-stone-100">
+                محول العرنسية (Arabizi / Franco)
+              </h3>
+              <p className="text-xs text-stone-400">
+                تحويل الحروف اللاتينية والأرقام (3, 7, 9) إلى دارجة مغربية عربية
+              </p>
             </div>
           </div>
 
@@ -98,7 +109,8 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
 
           <div className="flex justify-between items-center">
             <div className="flex gap-1 text-[11px] text-stone-500">
-              <span>3 = ع</span> | <span>7 = ح</span> | <span>9 = ق</span> | <span>5 = خ</span>
+              <span>3 = ع</span> | <span>7 = ح</span> | <span>9 = ق</span> |{" "}
+              <span>5 = خ</span>
             </div>
 
             <button
@@ -129,7 +141,9 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
           {convertedResult && (
             <div className="bg-stone-950 border border-amber-500/30 rounded-xl p-4 space-y-3 animate-in fade-in">
               <div>
-                <span className="text-xs text-amber-400 font-semibold block mb-1">النتيجة بالدارجة المغربية:</span>
+                <span className="text-xs text-amber-400 font-semibold block mb-1">
+                  النتيجة بالدارجة المغربية:
+                </span>
                 <p className="text-base font-bold text-stone-100 leading-relaxed font-sans">
                   {convertedResult.arabicScript}
                 </p>
@@ -137,7 +151,8 @@ export const ArabiziConverterModal: React.FC<ArabiziConverterModalProps> = ({
 
               {convertedResult.englishMeaning && (
                 <div className="text-xs text-stone-400 border-t border-stone-800 pt-2">
-                  <strong className="text-stone-300">المعنى:</strong> {convertedResult.englishMeaning}
+                  <strong className="text-stone-300">المعنى:</strong>{" "}
+                  {convertedResult.englishMeaning}
                 </div>
               )}
 

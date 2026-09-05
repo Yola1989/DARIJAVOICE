@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.env*
+.secrets
+*-admin*.json
+*service-account*.json
+*.zip

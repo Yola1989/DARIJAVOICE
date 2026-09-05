@@ -1,93 +1,83 @@
-import React, { useState } from 'react';
-import { CustomerReview } from '../types';
-import { Star, CheckCircle2, MessageSquarePlus, Sparkles, X, Send } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import React, { useState } from "react";
+import { CustomerReview } from "../types";
+import {
+  Star,
+  CheckCircle2,
+  MessageSquarePlus,
+  Sparkles,
+  X,
+  Send,
+} from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 interface ReviewsSectionProps {
   reviews: CustomerReview[];
-  onAddReview?: (review: CustomerReview) => void;
   userEmail?: string;
   userName?: string;
 }
 
 export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
   reviews,
-  onAddReview,
   userEmail,
   userName,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [rating, setRating] = useState(5);
   const [hoverRating, setHoverRating] = useState(0);
-  const [name, setName] = useState(userName || '');
-  const [role, setRole] = useState('');
-  const [comment, setComment] = useState('');
+  const [name, setName] = useState(userName || "");
+  const [role, setRole] = useState("");
+  const [comment, setComment] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const visibleReviews = reviews.filter((r) => r.isVisible);
+  const averageRating = visibleReviews.length
+    ? (
+        visibleReviews.reduce((total, review) => total + review.rating, 0) /
+        visibleReviews.length
+      ).toFixed(1)
+    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!comment.trim() || !name.trim()) return;
 
+    if (!userEmail) {
+      window.alert("خاصك تسجل الدخول قبل ما ترسل التقييم.");
+      return;
+    }
+
     setLoading(true);
-    const newRevData = {
-      name: name.trim(),
-      role: role.trim() || 'مستخدم المنصة',
-      rating,
-      comment: comment.trim(),
-      verified: Boolean(userEmail),
-      isVisible: true,
-      createdAt: 'الآن',
-    };
-
-    let createdReview: CustomerReview = {
-      id: `rev_${Date.now()}`,
-      ...newRevData,
-    };
 
     try {
-      // 1. Save to server API
-      const res = await fetch('/api/reviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRevData),
+      await apiFetch("/api/reviews", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          role: role.trim() || "مستخدم المنصة",
+          rating,
+          comment: comment.trim(),
+        }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.review) {
-          createdReview = data.review;
-        }
-      }
-    } catch (err) {
-      console.warn('Server API review save fallback:', err);
-    }
 
-    try {
-      // 2. Save to Firestore
-      const docRef = await addDoc(collection(db, 'reviews'), {
-        ...newRevData,
-        createdAt: new Date().toISOString(),
-      });
-      createdReview.id = docRef.id;
-    } catch (err) {
-      console.warn('Firestore review save fallback:', err);
-    }
+      setSubmitted(true);
 
-    // 3. Update parent state immediately
-    if (onAddReview) {
-      onAddReview(createdReview);
-    }
+      setTimeout(() => {
+        setIsModalOpen(false);
+        setSubmitted(false);
+        setComment("");
+      }, 1800);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "تعذر إرسال التقييم. حاول مرة أخرى.";
 
-    setSubmitted(true);
-    setTimeout(() => {
-      setIsModalOpen(false);
-      setSubmitted(false);
-      setComment('');
-    }, 1800);
-    setLoading(false);
+      window.alert(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -97,14 +87,23 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
               <Sparkles className="w-3.5 h-3.5" />
-              تجارب حقيقية
+              {visibleReviews.length > 0
+                ? `${visibleReviews.length} تقييمات موثقة`
+                : "آراء الزبناء"}
             </span>
-            <div className="flex items-center gap-0.5 text-amber-400">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />
-              ))}
-              <span className="text-xs font-bold text-stone-300 mr-1.5">4.9 / 5</span>
-            </div>
+            {averageRating && (
+              <div className="flex items-center gap-0.5 text-amber-400">
+                {[...Array(5)].map((_, i) => (
+                  <Star
+                    key={i}
+                    className="w-4 h-4 fill-amber-400 text-amber-400"
+                  />
+                ))}
+                <span className="text-xs font-bold text-stone-300 mr-1.5">
+                  {averageRating} / 5
+                </span>
+              </div>
+            )}
           </div>
           <h3 className="text-lg sm:text-xl font-black text-stone-100">
             شنو كيقولو رواد الأعمال وصناع المحتوى على DarijaVoice؟
@@ -123,6 +122,12 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
 
       {/* Reviews Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {visibleReviews.length === 0 && (
+          <div className="md:col-span-2 lg:col-span-4 rounded-2xl border border-dashed border-stone-800 bg-stone-900/30 p-6 text-center text-xs text-stone-400">
+            مازال ما كاين حتى تقييم منشور. التقييمات كتبان هنا غير من بعد
+            مراجعتها والموافقة عليها.
+          </div>
+        )}
         {visibleReviews.map((rev) => (
           <div
             key={rev.id}
@@ -132,7 +137,10 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
               <div className="flex items-center justify-between gap-2 mb-2.5">
                 <div className="flex items-center gap-0.5 text-amber-400">
                   {[...Array(rev.rating)].map((_, i) => (
-                    <Star key={i} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    <Star
+                      key={i}
+                      className="w-3.5 h-3.5 fill-amber-400 text-amber-400"
+                    />
                   ))}
                 </div>
                 {rev.verified && (
@@ -152,7 +160,9 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
                 <p className="text-xs font-bold text-stone-200">{rev.name}</p>
                 <p className="text-[11px] text-stone-400">{rev.role}</p>
               </div>
-              <span className="text-[10px] text-stone-400 font-mono">{rev.createdAt}</span>
+              <span className="text-[10px] text-stone-400 font-mono">
+                {rev.createdAt}
+              </span>
             </div>
           </div>
         ))}
@@ -174,8 +184,12 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
                 <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
                   <CheckCircle2 className="w-6 h-6" />
                 </div>
-                <h4 className="text-base font-bold text-stone-100">شكراً جزيلاً على تقييمك!</h4>
-                <p className="text-xs text-stone-400">تم تسجيل رأيك بنجاح وسيظهر للمستخدمين.</p>
+                <h4 className="text-base font-bold text-stone-100">
+                  شكراً جزيلاً على تقييمك!
+                </h4>
+                <p className="text-xs text-stone-400">
+                  تسجل رأيك وباقي غير يراجعو المدير قبل ما يبان للمستخدمين.
+                </p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -207,20 +221,20 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
                         <Star
                           className={`w-6 h-6 transition-colors ${
                             (hoverRating || rating) >= star
-                              ? 'fill-amber-400 text-amber-400'
-                              : 'text-stone-700'
+                              ? "fill-amber-400 text-amber-400"
+                              : "text-stone-700"
                           }`}
                         />
                       </button>
                     ))}
                     <span className="text-xs font-bold text-amber-400 mr-2">
                       {rating === 5
-                        ? 'ممتاز جداً 🌟'
+                        ? "ممتاز جداً 🌟"
                         : rating === 4
-                        ? 'جيد جداً 👍'
-                        : rating === 3
-                        ? 'مقبول'
-                        : 'يحتاج تحسين'}
+                          ? "جيد جداً 👍"
+                          : rating === 3
+                            ? "مقبول"
+                            : "يحتاج تحسين"}
                     </span>
                   </div>
                 </div>
@@ -283,7 +297,9 @@ export const ReviewsSection: React.FC<ReviewsSectionProps> = ({
                     className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs flex items-center gap-1.5 transition disabled:opacity-50"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>{loading ? 'جاري الإرسال...' : 'نشر التقييم'}</span>
+                    <span>
+                      {loading ? "جاري الإرسال..." : "إرسال التقييم للمراجعة"}
+                    </span>
                   </button>
                 </div>
               </form>

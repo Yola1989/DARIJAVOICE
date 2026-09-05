@@ -1,22 +1,22 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from "react";
 import {
   User,
-  signInWithPopup,
-  signInWithEmailAndPassword,
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
-  signOut as fbSignOut,
+  getRedirectResult,
   onAuthStateChanged,
-} from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  onSnapshot,
-} from 'firebase/firestore';
-import { auth, googleProvider, db } from '../lib/firebase';
-import { UserProfile, AppSettings } from '../types';
-import { DEFAULT_APP_SETTINGS } from '../data/presets';
+  setPersistence,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut as firebaseSignOut,
+  updateProfile,
+} from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
+import { auth, db, googleProvider } from "../lib/firebase";
+import { apiFetch } from "../lib/api";
+import { AppSettings, UserProfile } from "../types";
+import { DEFAULT_APP_SETTINGS } from "../data/presets";
 
 interface AuthContextType {
   user: User | null;
@@ -24,228 +24,136 @@ interface AuthContextType {
   appSettings: AppSettings;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (e: string, p: string) => Promise<void>;
-  signUpWithEmail: (e: string, p: string, name: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    name: string,
+  ) => Promise<void>;
   signOut: () => Promise<void>;
-  consumeTokens: (amount: number, isTrial: boolean) => Promise<boolean>;
   refreshProfile: () => Promise<void>;
 }
 
 export const ADMIN_EMAILS = [
-  'younes.ahdidou@gmail.com',
-  'younes.ahdidou@googlemail.com',
+  "younes.ahdidou@gmail.com",
+  "younes.ahdidou@googlemail.com",
 ];
-
-export const isUserAdminEmail = (email?: string | null): boolean => {
-  if (!email) return false;
-  const normalized = email.trim().toLowerCase();
-  return ADMIN_EMAILS.some((admin) => admin.toLowerCase() === normalized);
-};
+export const isUserAdminEmail = (email?: string | null) =>
+  Boolean(email && ADMIN_EMAILS.includes(email.trim().toLowerCase()));
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
-    try {
-      const cached = localStorage.getItem('darija_app_settings');
-      if (cached) return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(cached) };
-    } catch (e) {
-      // ignore
-    }
-    return DEFAULT_APP_SETTINGS;
-  });
+  const [appSettings, setAppSettings] =
+    useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [loading, setLoading] = useState(true);
 
-  // Subscribe to App Settings
+  const refreshProfile = async () => {
+    if (!auth.currentUser) return;
+    const response = await apiFetch<{
+      profile: UserProfile;
+      settings?: AppSettings;
+    }>("/api/me/bootstrap", {
+      method: "POST",
+    });
+    setUserProfile(response.profile);
+    if (response.settings)
+      setAppSettings({ ...DEFAULT_APP_SETTINGS, ...response.settings });
+  };
+
   useEffect(() => {
-    const settingsDoc = doc(db, 'settings', 'global');
-    const unsubSettings = onSnapshot(settingsDoc, (snapshot) => {
-      if (snapshot.exists()) {
-        const merged = { ...DEFAULT_APP_SETTINGS, ...snapshot.data() };
-        setAppSettings(merged);
-        try {
-          localStorage.setItem('darija_app_settings', JSON.stringify(merged));
-        } catch (e) {
-          // ignore
-        }
-      } else {
-        // Initialize default settings doc if missing
-        setDoc(settingsDoc, DEFAULT_APP_SETTINGS).catch(console.error);
+    getRedirectResult(auth).catch((error) => {
+      console.error("Google redirect sign-in failed:", error);
+    });
+
+    let unsubscribeProfile: (() => void) | undefined;
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      unsubscribeProfile?.();
+      unsubscribeProfile = undefined;
+      setUser(currentUser);
+      setUserProfile(null);
+
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        await refreshProfile();
+        unsubscribeProfile = onSnapshot(
+          doc(db, "users", currentUser.uid),
+          (snapshot) =>
+            snapshot.exists() && setUserProfile(snapshot.data() as UserProfile),
+          (error) => console.warn("Profile listener:", error),
+        );
+      } catch (error) {
+        console.error("Profile bootstrap failed:", error);
+      } finally {
+        setLoading(false);
       }
     });
 
-    return () => unsubSettings();
+    return () => {
+      unsubscribeProfile?.();
+      unsubscribeAuth();
+    };
   }, []);
 
-  // Listen to Auth State
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        const isAdmin = isUserAdminEmail(currentUser.email);
-        const userDocRef = doc(db, 'users', currentUser.uid);
-
-        // Immediate optimistic profile for admin
-        if (isAdmin) {
-          const optimisticAdminProfile: UserProfile = {
-            id: currentUser.uid,
-            email: currentUser.email || 'younes.ahdidou@gmail.com',
-            displayName: currentUser.displayName || 'مدير الموقع',
-            role: 'admin',
-            status: 'active',
-            tokens: 999999,
-            freeTrialsRemaining: 999999,
-            freeTrialMaxSeconds: DEFAULT_APP_SETTINGS.freeTrialMaxSeconds,
-            subscriptionTier: 'unlimited',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          setUserProfile(optimisticAdminProfile);
-        }
-
-        try {
-          const userSnap = await getDoc(userDocRef);
-
-          if (userSnap.exists()) {
-            const data = userSnap.data() as UserProfile;
-            if (isAdmin) {
-              data.role = 'admin';
-              data.status = 'active';
-              data.tokens = 999999;
-              data.freeTrialsRemaining = 999999;
-              data.subscriptionTier = 'unlimited';
-              // Sync to Firestore
-              setDoc(userDocRef, { role: 'admin', status: 'active', tokens: 999999, freeTrialsRemaining: 999999, subscriptionTier: 'unlimited' }, { merge: true }).catch(console.error);
-            }
-            setUserProfile(data);
-          } else {
-            // New User Registration
-            const newProfile: UserProfile = {
-              id: currentUser.uid,
-              email: currentUser.email || '',
-              displayName: currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'مستخدم'),
-              role: isAdmin ? 'admin' : 'user',
-              status: isAdmin ? 'active' : 'pending',
-              tokens: isAdmin ? 999999 : 50,
-              freeTrialsRemaining: isAdmin ? 999999 : DEFAULT_APP_SETTINGS.freeTrialsDefaultCount,
-              freeTrialMaxSeconds: DEFAULT_APP_SETTINGS.freeTrialMaxSeconds,
-              subscriptionTier: isAdmin ? 'unlimited' : 'free',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-
-            await setDoc(userDocRef, newProfile);
-            setUserProfile(newProfile);
-          }
-        } catch (dbErr) {
-          console.warn('User profile sync notice:', dbErr);
-        }
-
-        // Live snapshot listener for user profile updates
-        const unsubProfile = onSnapshot(userDocRef, (snap) => {
-          if (snap.exists()) {
-            const snapData = snap.data() as UserProfile;
-            if (isAdmin) {
-              snapData.role = 'admin';
-              snapData.status = 'active';
-              snapData.tokens = 999999;
-              snapData.freeTrialsRemaining = 999999;
-              snapData.subscriptionTier = 'unlimited';
-            }
-            setUserProfile(snapData);
-          }
-        }, (snapErr) => {
-          console.warn('Profile snapshot notice:', snapErr);
-        });
-
-        setLoading(false);
-        return () => unsubProfile();
-      } else {
-        setUserProfile(null);
-        setLoading(false);
-      }
-    });
-
-    return () => unsubscribe();
+    apiFetch<{ settings: AppSettings }>("/api/settings")
+      .then(({ settings }) =>
+        setAppSettings({ ...DEFAULT_APP_SETTINGS, ...settings }),
+      )
+      .catch(() => setAppSettings(DEFAULT_APP_SETTINGS));
   }, []);
 
   const signInWithGoogle = async () => {
+    await setPersistence(auth, browserLocalPersistence);
+
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (err: any) {
-      console.error('Google Sign In Error:', err);
-      throw err;
+    } catch (error: any) {
+      const redirectFallbackCodes = new Set([
+        "auth/invalid-credential",
+        "auth/popup-blocked",
+        "auth/operation-not-supported-in-this-environment",
+      ]);
+
+      if (redirectFallbackCodes.has(error?.code)) {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+
+      throw error;
     }
   };
 
-  const signInWithEmail = async (email: string, pass: string) => {
-    await signInWithEmailAndPassword(auth, email.trim(), pass);
+  const signInWithEmail = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email.trim(), password);
   };
 
-  const signUpWithEmail = async (email: string, pass: string, name: string) => {
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-    const isAdmin = isUserAdminEmail(email);
-    const newProfile: UserProfile = {
-      id: cred.user.uid,
-      email: cred.user.email || email.trim(),
-      displayName: name || (email ? email.split('@')[0] : 'مستخدم'),
-      role: isAdmin ? 'admin' : 'user',
-      status: isAdmin ? 'active' : 'pending',
-      tokens: isAdmin ? 999999 : 50,
-      freeTrialsRemaining: isAdmin ? 999999 : appSettings.freeTrialsDefaultCount,
-      freeTrialMaxSeconds: appSettings.freeTrialMaxSeconds,
-      subscriptionTier: isAdmin ? 'unlimited' : 'free',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await setDoc(doc(db, 'users', cred.user.uid), newProfile);
-    setUserProfile(newProfile);
+  const signUpWithEmail = async (
+    email: string,
+    password: string,
+    name: string,
+  ) => {
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      email.trim(),
+      password,
+    );
+    if (name.trim())
+      await updateProfile(credential.user, { displayName: name.trim() });
+    await credential.user.getIdToken(true);
+    await refreshProfile();
   };
 
   const signOut = async () => {
-    await fbSignOut(auth);
-    setUserProfile(null);
-  };
-
-  const refreshProfile = async () => {
-    if (user) {
-      const snap = await getDoc(doc(db, 'users', user.uid));
-      if (snap.exists()) {
-        setUserProfile(snap.data() as UserProfile);
-      }
-    }
-  };
-
-  const consumeTokens = async (amount: number, isTrial: boolean): Promise<boolean> => {
-    if (!user || !userProfile) return false;
-    if (userProfile.role === 'admin') return true;
-
-    const userDocRef = doc(db, 'users', user.uid);
-
-    if (isTrial) {
-      if (userProfile.freeTrialsRemaining <= 0) return false;
-      const updatedTrials = Math.max(0, userProfile.freeTrialsRemaining - 1);
-      await updateDoc(userDocRef, {
-        freeTrialsRemaining: updatedTrials,
-        updatedAt: new Date().toISOString(),
-      });
-      setUserProfile((prev) => prev ? { ...prev, freeTrialsRemaining: updatedTrials } : null);
-      return true;
-    } else {
-      // Activated user token deduction
-      if (userProfile.status !== 'active') return false;
-      if (userProfile.tokens < amount) return false;
-
-      const updatedTokens = Math.max(0, userProfile.tokens - amount);
-      await updateDoc(userDocRef, {
-        tokens: updatedTokens,
-        updatedAt: new Date().toISOString(),
-      });
-      setUserProfile((prev) => prev ? { ...prev, tokens: updatedTokens } : null);
-      return true;
-    }
+    await firebaseSignOut(auth);
   };
 
   return (
@@ -259,7 +167,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithEmail,
         signUpWithEmail,
         signOut,
-        consumeTokens,
         refreshProfile,
       }}
     >
@@ -269,7 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within an AuthProvider');
-  return context;
+  const value = useContext(AuthContext);
+  if (!value) throw new Error("useAuth must be used within AuthProvider");
+  return value;
 };
