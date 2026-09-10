@@ -984,7 +984,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     ✓ <strong>18,000 نقطة</strong> (حوالي 30 دقيقة)
                   </li>
                   <li className="flex items-center gap-1.5">
-                    ✓ الرصيد صالح لمدة 6 أشهر
+                    ✓ الرصيد صالح لمدة 3 أشهر
                   </li>
                   <li className="flex items-center gap-1.5">
                     ✓ بلا تجديد شهري إجباري
@@ -1004,6 +1004,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 <ul className="text-xs text-stone-300 space-y-2">
                   <li className="flex items-center gap-1.5">
                     ✓ <strong>36,000 نقطة</strong> (حوالي 60 دقيقة)
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    ✓ الرصيد صالح لمدة 3 أشهر
                   </li>
                   <li className="flex items-center gap-1.5">
                     ✓ جميع الأصوات المغربية الأساسية
@@ -1026,6 +1029,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 <ul className="text-xs text-stone-200 space-y-2">
                   <li className="flex items-center gap-1.5">
                     ✓ <strong>108,000 نقطة</strong> (حوالي 180 دقيقة)
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    ✓ الرصيد صالح لمدة 6 أشهر
                   </li>
                   <li className="flex items-center gap-1.5">
                     ✓ أصوات الإعلانات الحصرية (سلمى، المهدي، أنس...)

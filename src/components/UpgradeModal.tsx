@@ -52,7 +52,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
       price: appSettings.miniPriceMAD,
       minutes: 30,
       tokens: 18_000,
-      validityMonths: 6,
+      validityMonths: 3,
       description: "مناسبة باش تجرب الخدمة وتوجد إعلانات قصيرة.",
     },
     {
@@ -61,7 +61,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
       price: appSettings.starterPriceMAD,
       minutes: 60,
       tokens: 36_000,
-      validityMonths: 6,
+      validityMonths: 3,
       description: "لصناع المحتوى والمتاجر اللي كيخدمو بشكل منتظم.",
     },
     {
@@ -167,7 +167,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
             </h3>
             <p className="mt-1.5 text-xs leading-relaxed text-stone-400">
               ما كاين لا تجديد شهري إجباري لا اقتطاع أوتوماتيكي. الرصيد صالح
-              6 أشهر، وباقة Business صالحة 12 شهر.
+              3 أشهر فـ Mini وStarter، و6 أشهر فـ Pro، وباقة Business صالحة 12 شهر.
             </p>
             {launchBonusAvailable && (
               <p className="mt-2 text-xs font-bold text-emerald-300">

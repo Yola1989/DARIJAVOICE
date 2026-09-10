@@ -35,14 +35,14 @@ const PLANS = {
     priceMAD: 59,
     tokensCount: 18000,
     includedMinutes: 30,
-    validityMonths: 6,
+    validityMonths: 3,
   },
   starter: {
     name: "Starter",
     priceMAD: 99,
     tokensCount: 36000,
     includedMinutes: 60,
-    validityMonths: 6,
+    validityMonths: 3,
   },
   pro: {
     name: "Pro",
@@ -875,7 +875,6 @@ app.patch("/api/subscriptions/:id", auth, admin, async (req, res) => {
         const oldExpiryMs = new Date(user.creditsExpireAt || 0).getTime();
         const oldBalanceValid =
           Number.isFinite(oldExpiryMs) && oldExpiryMs > Date.now();
-        const baseTokens = oldBalanceValid ? Number(user.tokens || 0) : 0;
         const candidateExpiryMs = new Date(addMonthsIso(validityMonths)).getTime();
         const creditsExpireAt = new Date(
           Math.max(oldBalanceValid ? oldExpiryMs : 0, candidateExpiryMs),
@@ -884,7 +883,7 @@ app.patch("/api/subscriptions/:id", auth, admin, async (req, res) => {
         tx.update(userRef, {
           status: "active",
           subscriptionTier: request.planTier,
-          tokens: baseTokens + planTokens + bonusTokens,
+          tokens: planTokens + bonusTokens,
           creditsExpireAt,
           ...(bonusAvailable
             ? {
