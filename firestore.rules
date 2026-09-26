@@ -1,61 +1,73 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function adminEmail() {
-      return signedIn() && request.auth.token.email != null &&
-        request.auth.token.email.lower() in [
-          'younes.ahdidou@gmail.com',
-          'younes.ahdidou@googlemail.com'
-        ];
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
     }
-    function adminRole() {
-      return signedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
-    function isAdmin() { return adminEmail() || adminRole(); }
-    function owner(userId) { return signedIn() && request.auth.uid == userId; }
 
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == 'younes.ahdidou@gmail.com' ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    // Users Collection
     match /users/{userId} {
-      allow read: if owner(userId) || isAdmin();
-      // Profiles, balances, roles and account status are server-only writes.
-      allow create, update, delete: if false;
+      allow read: if isAuthenticated();
+      
+      // Users can only create their initial profile with default role/status/free limits
+      allow create: if isAuthenticated() && (
+        isAdmin() || 
+        (request.auth.uid == userId && 
+         request.resource.data.role == 'user' && 
+         request.resource.data.status == 'pending' &&
+         request.resource.data.tokens <= 50 &&
+         request.resource.data.freeTrialsRemaining <= 5)
+      );
+      
+      // Hardened update: non-admins CANNOT elevate role, CANNOT activate status, CANNOT increase tokens or freeTrials, CANNOT change subscriptionTier
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (request.auth.uid == userId &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.status == resource.data.status &&
+         request.resource.data.tokens <= resource.data.tokens &&
+         request.resource.data.freeTrialsRemaining <= resource.data.freeTrialsRemaining &&
+         (!('subscriptionTier' in request.resource.data) || request.resource.data.subscriptionTier == resource.data.subscriptionTier))
+      );
+      
+      allow delete: if isAdmin();
     }
 
+    // App Settings (pricing, contact whatsapp, announcements) - Admin only write
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if isAdmin();
     }
 
-    match /generations/{generationId} {
-      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if false;
+    // Generation logs - users can only write their own logs and read their own
+    match /generations/{genId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
-    match /generation_locks/{userId} {
-      allow read, write: if false;
-    }
-
-   match /subscription_requests/{requestId} {
-  allow read: if signedIn() &&
-    (resource.data.userId == request.auth.uid || isAdmin());
-
-  allow create, update, delete: if false;
-}
-
+    // Customer Reviews & Testimonials
     match /reviews/{reviewId} {
-  allow read: if (
-    resource.data.isVisible == true &&
-    resource.data.moderationStatus == 'approved'
-  ) || isAdmin();
-
-  allow create, update, delete: if false;
-}
-
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow write: if false;
+      allow read: if true;
+      allow create: if request.resource.data.author is string && 
+                      request.resource.data.comment is string &&
+                      request.resource.data.comment.size() <= 600 &&
+                      request.resource.data.rating is int &&
+                      request.resource.data.rating >= 1 &&
+                      request.resource.data.rating <= 5;
+      allow update, delete: if isAdmin();
     }
   }
 }

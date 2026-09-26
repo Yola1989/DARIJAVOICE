@@ -1,14 +1,14 @@
 export interface VoiceOption {
   id: string;
-  geminiVoice: string;
-  name: string;
+  geminiVoice: string; // Underlying Gemini prebuilt voice: Kore, Puck, Aoede, Charon, Fenrir, Zephyr
+  name: string; // Moroccan Arabic Name e.g. "خديجة", "يوسف"
   arabicName: string;
-  gender: "female" | "male";
-  isCommercialSpecialist?: boolean;
+  gender: 'female' | 'male';
+  isCommercialSpecialist?: boolean; // Flag for marketing/commercial voices
   specialtyTag?: string;
   description: string;
   tags: string[];
-  previewSamplePhrase?: string;
+  sampleGreeting?: string; // Short Moroccan greeting sample
 }
 
 export interface ToneOption {
@@ -29,20 +29,19 @@ export interface PresetPhrase {
   isCommercial?: boolean;
 }
 
-export type PlanId =
-  "free" | "mini" | "starter" | "pro" | "business" | "unlimited";
-
 export interface UserProfile {
   id: string;
   email: string;
   displayName: string;
-  role: "admin" | "user";
-  status: "pending" | "active" | "suspended";
-  tokens: number;
-  freeTrialsRemaining: number;
-  freeTrialMaxSeconds: number;
-  subscriptionTier: PlanId;
-  creditsExpireAt?: string;
+  role: 'admin' | 'user';
+  status: 'pending' | 'active' | 'suspended';
+  tokens: number; // Tokens balance
+  freeTrialsRemaining: number; // e.g., 2 free trials for non-activated users
+  freeTrialMaxSeconds: number; // e.g., 15 seconds max per trial
+  subscriptionTier: 'free' | 'mini' | 'starter' | 'pro' | 'business' | 'unlimited';
+  creditsExpireAt?: string | null;
+  launchBonusGrantedAt?: string | null;
+  launchBonusMinutes?: number;
   createdAt: string;
   updatedAt: string;
   phoneNumber?: string;
@@ -53,6 +52,7 @@ export interface AppSettings {
   freeTrialMaxSeconds: number;
   tokensPerSecond: number;
   contactWhatsApp: string;
+  whatsappNumber?: string;
   paymentInstructions: string;
   miniPriceMAD: number;
   starterPriceMAD: number;
@@ -62,7 +62,6 @@ export interface AppSettings {
   launchBonusLimit: number;
   launchBonusMinutes: number;
   launchBonusClaimedCount: number;
-  commercialSettingsVersion: number;
 }
 
 export interface TTSHistoryItem {
@@ -78,36 +77,15 @@ export interface TTSHistoryItem {
   tokensDeducted?: number;
 }
 
-export interface CustomerReview {
+export interface ReviewItem {
   id: string;
-  name: string;
-  role: string;
-  avatar?: string;
-  rating: number;
+  authorName: string;
+  authorRole?: string;
+  rating: number; // 1 to 5
   comment: string;
-  verified: boolean;
-  isVisible: boolean;
-  moderationStatus?: "pending" | "approved" | "hidden" | "rejected";
+  status: 'approved' | 'pending' | 'hidden';
+  userId?: string;
+  userEmail?: string;
   createdAt: string;
 }
 
-export interface SubscriptionRequest {
-  id: string;
-  userId: string;
-  userEmail: string;
-  userName?: string;
-  planName: string;
-  planTier: Exclude<PlanId, "free" | "unlimited">;
-  priceMAD: number;
-  tokensCount: number;
-  includedMinutes: number;
-  validityMonths?: number;
-  bonusMinutesApplied?: number;
-  tokensAdded?: number;
-  status: "pending" | "approved" | "rejected";
-  createdAt: string;
-  updatedAt?: string;
-  approvedAt?: string;
-  approvedBy?: string;
-  notes?: string;
-}

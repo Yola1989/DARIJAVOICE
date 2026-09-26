@@ -64,41 +64,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await signInWithGoogle();
       onClose();
     } catch (err: any) {
-      console.error('Google Sign In Error:', err);
-      let msg = 'تعذر تسجيل الدخول عبر Google.';
-      if (err?.code === 'auth/unauthorized-domain') {
-        msg = `النطاق الحالي (${window.location.hostname}) غير مصرح به في Firebase. يرجى إضافة هذا النطاق إلى Authorized Domains في إعدادات Firebase Console، أو استخدم الدخول بالبريد الإلكتروني أدناه.`;
-      } else if (err?.code === 'auth/popup-blocked') {
-        msg = 'قام المتصفح بحظر النافذة المنبثقة (Popup). يرجى السماح بالنوافذ المنبثقة وإعادة المحاولة.';
-      } else if (err?.code === 'auth/popup-closed-by-user') {
-        msg = 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.';
-      } else if (err?.code === 'auth/operation-not-allowed') {
-        msg = 'تسجيل الدخول عبر Google غير مفعّل في لوحة تحكم Firebase.';
-      } else if (err?.message) {
-        msg = `خطأ: ${err.message}`;
-      }
-      setError(msg);
+      console.error(err);
+      setError('فشل في تسجيل الدخول عبر Google.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div 
-        className="bg-stone-900 border border-stone-800 rounded-3xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden shadow-2xl p-5 sm:p-6 relative my-auto text-right"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-stone-900 border border-stone-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl p-6 relative">
         {/* Header Tabs */}
-        <div className="flex border-b border-stone-800 pb-3 mb-4 justify-between items-center shrink-0">
-          <div className="flex gap-1.5 sm:gap-2">
+        <div className="flex border-b border-stone-800 pb-3 mb-5 justify-between items-center">
+          <div className="flex gap-2">
             <button
-              type="button"
               onClick={() => { setMode('signin'); setError(null); }}
-              className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-xl transition ${
+              className={`px-4 py-2 text-sm font-bold rounded-xl transition ${
                 mode === 'signin'
                   ? 'bg-amber-500 text-stone-950 shadow-md'
                   : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -107,38 +88,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               تسجيل الدخول
             </button>
             <button
-              type="button"
               onClick={() => { setMode('signup'); setError(null); }}
-              className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-xl transition ${
+              className={`px-4 py-2 text-sm font-bold rounded-xl transition ${
                 mode === 'signup'
                   ? 'bg-amber-500 text-stone-950 shadow-md'
                   : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800'
               }`}
             >
-              حساب جديد
+              إنشاء حساب جديد
             </button>
           </div>
 
           <button
-            type="button"
             onClick={onClose}
-            aria-label="إغلاق"
-            className="text-stone-400 hover:text-white p-1.5 rounded-lg bg-stone-800/80 hover:bg-stone-800 border border-stone-700 transition"
+            className="text-stone-500 hover:text-stone-300 text-xs px-2 py-1 rounded-lg hover:bg-stone-800 transition"
           >
-            ✕
+            إغلاق ✕
           </button>
         </div>
 
-        <div className="overflow-y-auto pr-0.5 space-y-4">
-          {/* Info Banner */}
-          <div className="bg-amber-950/20 border border-amber-500/20 rounded-2xl p-3 text-xs text-amber-300/90 flex items-start gap-2">
-            <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-            <span>
-              {mode === 'signup'
-                ? 'سجّل الآن واحصل على تجارب مجانية لاختبار أصوات الدارجة المغربية والإعلانات!'
-                : 'ادخل لحسابك لإدارة نقاطك وتوليد أصوات الدارجة بجودة عالية بدون انقطاع.'}
-            </span>
-          </div>
+        {/* Info Banner */}
+        <div className="bg-amber-950/20 border border-amber-500/20 rounded-2xl p-3 mb-4 text-xs text-amber-300/90 flex items-start gap-2">
+          <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+          <span>
+            {mode === 'signup'
+              ? 'سجّل الآن بضغطة زر (عبر Google أو البريد) واحصل فوراً على تجربتين مجانيتين (15 ثانية لكل مقطع) لاختبار نصوصك الخاصة!'
+              : 'ادخل لحسابك لإدارة نقاطك وتوليد أصوات الدارجة بجودة عالية بدون انقطاع.'}
+          </span>
+        </div>
 
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-rose-950/40 border border-rose-900 text-rose-300 text-xs flex items-center gap-2">
@@ -259,7 +236,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             )}
           </button>
         </form>
-        </div>
       </div>
     </div>
   );

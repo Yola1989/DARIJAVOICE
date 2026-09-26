@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   Volume2,
   Sparkles,
@@ -17,36 +17,67 @@ import {
   Flame,
   MessageCircle,
   Lock,
-  Crown,
-} from "lucide-react";
-import { VOICES, TONES, PRESET_PHRASES } from "./data/presets";
-import { AudioPlayer } from "./components/AudioPlayer";
-import { VoiceSelector } from "./components/VoiceSelector";
-import { ToneSelector } from "./components/ToneSelector";
-import { PresetSelector } from "./components/PresetSelector";
-import { ArabiziConverterModal } from "./components/ArabiziConverterModal";
-import { AdScriptGeneratorModal } from "./components/AdScriptGeneratorModal";
-import { AuthModal } from "./components/AuthModal";
-import { AdminDashboardModal } from "./components/AdminDashboardModal";
-import { UpgradeModal } from "./components/UpgradeModal";
-import { HistoryList } from "./components/HistoryList";
-import { ReviewsSection } from "./components/ReviewsSection";
-import { TTSHistoryItem, CustomerReview } from "./types";
-import { useAuth, isUserAdminEmail } from "./context/AuthContext";
-import { apiFetch } from "./lib/api";
+  Sun,
+  Moon,
+  ArrowLeft,
+  MessageSquareQuote,
+} from 'lucide-react';
+import { VOICES, TONES } from './data/presets';
+import { AudioPlayer } from './components/AudioPlayer';
+import { VoiceSelector } from './components/VoiceSelector';
+import { ToneSelector } from './components/ToneSelector';
+import { ArabiziConverterModal } from './components/ArabiziConverterModal';
+import { AdScriptGeneratorModal } from './components/AdScriptGeneratorModal';
+import { AuthModal } from './components/AuthModal';
+import { AdminDashboardModal } from './components/AdminDashboardModal';
+import { UpgradeModal } from './components/UpgradeModal';
+import { LowBalanceToast } from './components/LowBalanceToast';
+import { HistoryList } from './components/HistoryList';
+import { ReviewsSection } from './components/ReviewsSection';
+import { TTSHistoryItem } from './types';
+import { useAuth } from './context/AuthContext';
+import { db } from './lib/firebase';
+import { collection, addDoc } from 'firebase/firestore';
+import { DarijaVoiceLogo, BrandShowcaseModal } from './components/DarijaVoiceLogo';
 
 export default function App() {
-  const { user, userProfile, appSettings, signOut } = useAuth();
+  const { user, userProfile, appSettings, signOut, consumeTokens } = useAuth();
+
+  // Light mode is the default primary mode
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('darija_theme');
+    return saved === 'dark' ? 'dark' : 'light';
+  });
+
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    localStorage.setItem('darija_theme', next);
+  };
+
+  const isLight = theme === 'light';
+
+  // Synchronize document and body classes to ensure background is 100% unified
+  useEffect(() => {
+    if (isLight) {
+      document.documentElement.classList.remove('dark');
+      document.body.className = 'bg-slate-50 text-slate-800 antialiased font-sans min-h-screen overflow-x-hidden selection:bg-amber-500 selection:text-white';
+    } else {
+      document.documentElement.classList.add('dark');
+      document.body.className = 'bg-stone-950 text-stone-100 antialiased font-sans min-h-screen overflow-x-hidden selection:bg-amber-500 selection:text-stone-950';
+    }
+  }, [isLight]);
+
+  const cleanWhatsAppNumber = (appSettings.contactWhatsApp || appSettings.whatsappNumber || '212600000000').replace(/[^0-9]/g, '');
 
   const [text, setText] = useState(
-    "واش كتقلبي على الهمزة وعطر يخلي ريحتك فايحة طول النهار؟ جبنا ليك هاد البرودوي الحصري بأحسن ثمن فالمغرب! الكمية جد محدودة والتوصيل فابور حتال باب دارك!",
+    'مرحباً بكم فاستوديو أصوات الدارجة المغربية، اكتب هنا أي نص بغيتي تحولو لتسجيل صوتي طبيعي واحترافي.'
   );
-  const [selectedVoice, setSelectedVoice] = useState("salma_ads");
-  const [selectedTone, setSelectedTone] = useState("commercial");
+  const [selectedVoice, setSelectedVoice] = useState('salma_ads');
+  const [selectedTone, setSelectedTone] = useState('commercial');
   const [optimizeDarija, setOptimizeDarija] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<CustomerReview[]>([]);
 
   // Active audio player state
   const [activeAudio, setActiveAudio] = useState<{
@@ -57,8 +88,26 @@ export default function App() {
     toneName: string;
   } | null>(null);
 
-  // History state
-  const [history, setHistory] = useState<TTSHistoryItem[]>([]);
+  // History state with persistent local storage
+  const [history, setHistory] = useState<TTSHistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('darija_tts_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.warn('Could not parse saved history from localStorage', e);
+      return [];
+    }
+  });
+
+  const saveHistoryList = (newList: TTSHistoryItem[]) => {
+    setHistory(newList);
+    try {
+      // Store up to 10 latest items in localStorage
+      localStorage.setItem('darija_tts_history', JSON.stringify(newList.slice(0, 10)));
+    } catch (e) {
+      console.warn('LocalStorage quota reached when saving history', e);
+    }
+  };
 
   // Modals state
   const [isArabiziModalOpen, setIsArabiziModalOpen] = useState(false);
@@ -66,24 +115,19 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
 
-  const isAdmin =
-    userProfile?.role === "admin" || isUserAdminEmail(user?.email);
-  const isActive = userProfile?.status === "active" || isAdmin;
+  const isAdmin = userProfile?.role === 'admin';
+  const isActive = userProfile?.status === 'active' || isAdmin;
   const isFreeTrialUser = !isActive;
-  const freeTrialsLeft = userProfile
-    ? userProfile.freeTrialsRemaining
-    : appSettings.freeTrialsDefaultCount;
+  const freeTrialsLeft = userProfile ? userProfile.freeTrialsRemaining : appSettings.freeTrialsDefaultCount;
 
-  const handleGenerateTTS = async (
-    customText?: string,
-    customVoice?: string,
-  ) => {
+  const handleGenerateTTS = async (customText?: string, customVoice?: string) => {
     const textToProcess = (customText || text).trim();
     const voiceToUse = customVoice || selectedVoice;
 
     if (!textToProcess) {
-      setError("المرجو كتابة نص بالدارجة أولاً.");
+      setError('المرجو كتابة نص بالدارجة أولاً.');
       return;
     }
 
@@ -93,23 +137,32 @@ export default function App() {
       return;
     }
 
+    // Check token / trial balance
+    let isTrialRun = false;
+    let maxSecondsLimit: number | undefined = undefined;
+
     if (!isAdmin) {
       if (!isActive) {
         // Pending / Free user
         if (freeTrialsLeft <= 0) {
-          setError(
-            "لقد استنفدت جميع التجارب المجانية. المرجو شحن رصيد للاستمرار في توليد الأصوات.",
-          );
+          setError('لقد استنفدت جميع التجارب المجانية. المرجو تفعيل حسابك للاستمتاع بتوليد الأصوات بدون حدود.');
           setIsUpgradeModalOpen(true);
           return;
         }
+        isTrialRun = true;
+        maxSecondsLimit = appSettings.freeTrialMaxSeconds || 15; // Cut at 15 seconds for free trial
       } else {
+        // Check credit expiration
+        if (userProfile?.creditsExpireAt && new Date(userProfile.creditsExpireAt).getTime() < Date.now()) {
+          setError('انتهت مدة صلاحية رصيدك. المرجو تجديد شحن باقتك للاستمرار في الاستخدام.');
+          setIsUpgradeModalOpen(true);
+          return;
+        }
+
         // Active subscriber: check token balance
         const estimatedTokensNeeded = Math.ceil(textToProcess.length / 4);
         if ((userProfile?.tokens || 0) < estimatedTokensNeeded) {
-          setError(
-            "رصيدك من النقاط (Tokens) غير كافٍ. المرجو شحن رصيدك عبر الواتساب.",
-          );
+          setError('رصيدك من النقاط (Tokens) غير كافٍ. المرجو شحن رصيدك عبر الواتساب.');
           setIsUpgradeModalOpen(true);
           return;
         }
@@ -123,15 +176,29 @@ export default function App() {
     const voiceObj = VOICES.find((v) => v.id === voiceToUse);
 
     try {
-      const data = await apiFetch<any>("/api/tts", {
-        method: "POST",
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: textToProcess,
           voiceId: voiceToUse,
           toneDirective: toneObj?.promptDirective,
           optimizeDarija,
+          maxSecondsLimit,
         }),
       });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'فشل في توليد الصوت. يرجى التأكد من الاتصال والمحاولة من جديد.');
+      }
+
+      // Deduct tokens or decrement free trials
+      if (!isAdmin) {
+        const tokensToDeduct = Math.max(5, Math.ceil(data.duration * (appSettings.tokensPerSecond || 10)));
+        await consumeTokens(tokensToDeduct, isTrialRun);
+      }
 
       const newAudioItem = {
         audioUrl: data.audioDataUrl,
@@ -143,7 +210,7 @@ export default function App() {
 
       setActiveAudio(newAudioItem);
 
-      // Add to history
+      // Add to persistent history
       const historyEntry: TTSHistoryItem = {
         id: String(Date.now()),
         text: textToProcess,
@@ -156,123 +223,181 @@ export default function App() {
         duration: data.duration,
       };
 
-      setHistory((prev) => [historyEntry, ...prev.slice(0, 14)]);
+      saveHistoryList([historyEntry, ...history.slice(0, 9)]);
+
+      // Save generation log to Firestore if user is authenticated
+      if (user) {
+        try {
+          addDoc(collection(db, 'generations'), {
+            userId: user.uid,
+            userEmail: user.email || '',
+            text: textToProcess,
+            vocalizedText: data.vocalizedText || textToProcess,
+            voice: voiceObj?.name || voiceToUse,
+            tone: toneObj?.name || selectedTone,
+            tokensUsed: isAdmin ? 0 : Math.max(5, Math.ceil(data.duration * (appSettings.tokensPerSecond || 10))),
+            isFreeTrial: isTrialRun,
+            duration: data.duration,
+            createdAt: new Date().toISOString(),
+          }).catch((err) => console.warn('Non-blocking generation log notice:', err));
+        } catch (logErr) {
+          console.warn('Generation log notice:', logErr);
+        }
+      }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "حدث خطأ أثناء الاتصال بالخادم.");
+      setError(err.message || 'حدث خطأ أثناء الاتصال بالخادم.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSelectPreset = (presetText: string) => {
-    setText(presetText);
-    handleGenerateTTS(presetText);
-  };
-
-  // Public, moderated reviews
-  React.useEffect(() => {
-    apiFetch<{ reviews: CustomerReview[] }>("/api/reviews")
-      .then(({ reviews }) => setReviews(reviews || []))
-      .catch(() => setReviews([]));
-  }, []);
-
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 font-sans pb-16 selection:bg-amber-500 selection:text-stone-950">
+    <div className={`min-h-screen font-sans pb-16 transition-colors duration-200 ${
+      isLight ? 'bg-slate-50 text-slate-800 selection:bg-amber-500 selection:text-white' : 'bg-stone-950 text-stone-100 selection:bg-amber-500 selection:text-stone-950'
+    }`}>
       {/* Top Navbar */}
-      <header className="border-b border-stone-800/80 bg-stone-900/90 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3.5 flex flex-wrap items-center justify-between gap-2.5">
-          {/* Logo & Title */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 p-0.5 shadow-lg shadow-amber-500/20 flex items-center justify-center text-stone-950 font-bold shrink-0">
-              <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                <h1 className="text-sm sm:text-base md:text-lg font-black text-white">
-                  صوت الدارجة
-                </h1>
-                <span className="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  PRO
-                </span>
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-stone-400 hidden xs:block">
-                تحويل نصوص الدارجة المغربية وأصوات الإعلانات
-              </p>
-            </div>
+      <header className={`border-b backdrop-blur-md sticky top-0 z-30 transition-colors duration-200 ${
+        isLight ? 'bg-white/95 border-slate-200/80 shadow-xs' : 'bg-stone-900/80 border-stone-800/80'
+      }`}>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2">
+          {/* Logo & Brand using custom DarijaVoice design */}
+          <div 
+            onClick={() => setIsBrandModalOpen(true)}
+            className="cursor-pointer shrink-0 transition-transform active:scale-95"
+            title="انقر لمعاينة وتحميل الشعار الرسمي"
+          >
+            <DarijaVoiceLogo size="md" isLight={isLight} showText={true} interactive={true} />
           </div>
 
+          {/* Centered Floating Pill Navigation (Competitor Style) */}
+          <nav className={`hidden md:flex items-center gap-1 px-2 py-1 rounded-full border text-xs font-bold transition shadow-xs ${
+            isLight ? 'bg-slate-100/90 border-slate-200 text-slate-700' : 'bg-stone-950/80 border-stone-800 text-stone-300'
+          }`}>
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              className={`px-3.5 py-1.5 rounded-full transition ${
+                isLight ? 'bg-slate-950 text-white font-black' : 'bg-stone-800 text-white font-black'
+              }`}
+            >
+              الرئيسية
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('voices-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="px-3.5 py-1.5 rounded-full hover:text-amber-500 transition"
+            >
+              الأصوات
+            </button>
+            <button
+              onClick={() => setIsUpgradeModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-full hover:text-amber-500 transition"
+            >
+              الأسعار
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('reviews-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="px-3.5 py-1.5 rounded-full hover:text-amber-500 transition"
+            >
+              آراء العملاء
+            </button>
+            <a
+              href={`https://wa.me/${cleanWhatsAppNumber}?text=${encodeURIComponent('السلام عليكم، مهتم بمنصة صوت الدارجة المغربية')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3.5 py-1.5 rounded-full hover:text-emerald-500 transition flex items-center gap-1"
+            >
+              <span>تواصل معنا</span>
+            </a>
+          </nav>
+
           {/* User Status / Account Controls */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 flex-wrap">
-            {/* Upgrade & Pricing Plans Button (Always visible) */}
+          <div className="flex items-center gap-2">
+            {/* Theme Toggle Button (Light / Dark) */}
             <button
               type="button"
-              onClick={() => setIsUpgradeModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-xs shadow-md shadow-amber-500/20 hover:brightness-110 transition border border-amber-300"
+              onClick={toggleTheme}
+              className={`p-2 rounded-xl border transition flex items-center justify-center ${
+                isLight 
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200' 
+                  : 'bg-stone-800 hover:bg-stone-700 text-amber-400 border-stone-700'
+              }`}
+              title={isLight ? 'التبديل إلى الوضع الليلي' : 'التبديل إلى الوضع النهاري'}
+              aria-label="تبديل مظهر المنصة"
             >
-              <Crown className="w-3.5 h-3.5 fill-stone-950 shrink-0" />
-              <span>الباقات والترقية</span>
+              {isLight ? <Moon className="w-4 h-4 text-slate-700" /> : <Sun className="w-4 h-4 text-amber-400" />}
             </button>
 
             {/* Quick Action Tools */}
             <button
-              type="button"
               onClick={() => setIsAdScriptModalOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition"
+              className={`hidden lg:flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition ${
+                isLight 
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200' 
+                  : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}
             >
-              <Megaphone className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">صانع الإعلانات</span>
-              <span className="sm:hidden">إعلانات</span>
+              <Megaphone className="w-3.5 h-3.5 text-amber-500" />
+              <span>صانع الإعلانات</span>
             </button>
 
             <button
-              type="button"
               onClick={() => setIsArabiziModalOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-xs font-semibold text-stone-200 border border-stone-700 transition"
+              className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                isLight 
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200' 
+                  : 'bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700'
+              }`}
             >
-              <Languages className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <Languages className="w-3.5 h-3.5 text-amber-500" />
               <span>العرنسية</span>
             </button>
 
-            {/* Admin Dashboard Button */}
+            {/* Admin Dashboard Access Button - ONLY visible for authenticated Admin */}
             {isAdmin && (
               <button
-                type="button"
                 onClick={() => setIsAdminModalOpen(true)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500 text-stone-950 text-xs font-black shadow-md hover:bg-amber-400 transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 text-xs font-black shadow-md shadow-amber-500/20 hover:brightness-110 transition"
+                title="لوحة تحكم المدير"
               >
-                <ShieldCheck className="w-3.5 h-3.5 stroke-[2.5]" />
+                <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
                 <span className="hidden sm:inline">لوحة المدير</span>
                 <span className="sm:hidden">Admin</span>
+                <span className="bg-stone-950 text-amber-300 text-[10px] px-1.5 py-0.2 rounded-md font-mono">LIVE</span>
               </button>
             )}
 
             {/* Auth / Profile State */}
             {user ? (
-              <div className="flex items-center gap-1.5 bg-stone-900 border border-stone-800 p-1 rounded-xl sm:rounded-2xl">
+              <div className={`flex items-center gap-1.5 border p-1 rounded-2xl ${
+                isLight ? 'bg-slate-100 border-slate-200' : 'bg-stone-900 border-stone-800'
+              }`}>
                 {/* Tokens Badge */}
                 <button
-                  type="button"
                   onClick={() => setIsUpgradeModalOpen(true)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-stone-950 border border-amber-500/30 text-amber-400 hover:border-amber-400 text-xs font-bold font-mono transition"
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl border text-xs font-bold font-mono transition ${
+                    isLight 
+                      ? 'bg-white border-amber-300 text-amber-900 shadow-xs' 
+                      : 'bg-stone-950 border-amber-500/30 text-amber-400 hover:border-amber-400'
+                  }`}
                   title="الرصيد المتاح من النقاط"
                 >
-                  <Coins className="w-3 h-3 shrink-0" />
+                  <Coins className="w-3.5 h-3.5 text-amber-500" />
                   <span>
-                    {isAdmin
-                      ? "VIP ∞"
-                      : isActive
-                        ? `${userProfile?.tokens || 0} ن`
-                        : `تجربة (${freeTrialsLeft})`}
+                    {isAdmin ? 'VIP ∞' : isActive ? `${userProfile?.tokens || 0} نقطة` : `تجربة (${freeTrialsLeft})`}
                   </span>
                 </button>
 
                 {/* Upgrade Button if pending */}
                 {!isActive && !isAdmin && (
                   <button
-                    type="button"
                     onClick={() => setIsUpgradeModalOpen(true)}
-                    className="px-2 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs transition shadow-sm"
+                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs transition shadow-xs"
                   >
                     تفعيل
                   </button>
@@ -280,22 +405,26 @@ export default function App() {
 
                 {/* Logout */}
                 <button
-                  type="button"
                   onClick={() => signOut()}
-                  className="p-1.5 text-stone-400 hover:text-rose-400 rounded-lg hover:bg-stone-800 transition"
+                  className={`p-1.5 rounded-lg transition ${
+                    isLight ? 'text-slate-500 hover:text-rose-600 hover:bg-slate-200' : 'text-stone-400 hover:text-rose-400 hover:bg-stone-800'
+                  }`}
                   title="تسجيل الخروج"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             ) : (
               <button
-                type="button"
                 onClick={() => setIsAuthModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 text-xs font-black shadow-md transition"
+                className={`flex items-center gap-2 px-5 py-2 rounded-full font-bold text-xs shadow-sm transition ${
+                  isLight 
+                    ? 'bg-slate-950 hover:bg-slate-800 text-white' 
+                    : 'bg-amber-500 hover:bg-amber-400 text-stone-950'
+                }`}
               >
                 <LogIn className="w-3.5 h-3.5" />
-                <span>دخول / تسجيل</span>
+                <span>تسجيل الدخول</span>
               </button>
             )}
           </div>
@@ -303,30 +432,98 @@ export default function App() {
       </header>
 
       {/* Main Content Container */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 md:pt-10 space-y-10">
+        
+        {/* Competitor Style Hero Section */}
+        <section className="text-center space-y-6 pt-2 pb-4">
+          {/* Centered DarijaVoice Custom Emblem */}
+          <div className="flex justify-center">
+            <DarijaVoiceLogo size="xl" showText={false} isLight={isLight} />
+          </div>
+
+          {/* Main Headline (Competitor wording & style) */}
+          <div className="space-y-3 max-w-3xl mx-auto">
+            <h2 className={`text-2xl sm:text-4xl md:text-5xl font-black tracking-tight leading-[1.25] ${
+              isLight ? 'text-slate-950' : 'text-white'
+            }`}>
+              أنشئ أصواتًا واقعية بمختلف لهجات الدارجة المغربية.
+            </h2>
+            <p className={`text-sm sm:text-base max-w-xl mx-auto leading-relaxed ${
+              isLight ? 'text-slate-600' : 'text-stone-400'
+            }`}>
+              تقنية ذكاء اصطناعي مغربية مخصصة لتحويل نصوصك إلى صوت ناطق بلكنات محلية دقيقة، جاهزة لحملاتك الإعلانية ومحتواك على السوشيال ميديا.
+            </p>
+          </div>
+
+          {/* Primary Action Button (Competitor Style Rounded Pill) */}
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('darija-text-input');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  el.focus();
+                }
+              }}
+              className={`px-7 py-3 rounded-full font-black text-sm flex items-center gap-2.5 transition-all shadow-md active:scale-95 ${
+                isLight 
+                  ? 'bg-slate-950 hover:bg-slate-800 text-white' 
+                  : 'bg-amber-500 hover:bg-amber-400 text-stone-950'
+              }`}
+            >
+              <span>ابدأ مجاناً</span>
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsUpgradeModalOpen(true)}
+              className={`px-6 py-3 rounded-full font-bold text-sm border transition ${
+                isLight 
+                  ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300' 
+                  : 'bg-stone-900 hover:bg-stone-800 text-stone-200 border-stone-800'
+              }`}
+            >
+              عرض باقات الأسعار
+            </button>
+          </div>
+
+          {/* Section Subhead (Competitor Style) */}
+          <div className="pt-6 border-t border-slate-200/60 dark:border-stone-800/80 max-w-2xl mx-auto space-y-1">
+            <h3 className={`text-base sm:text-lg font-black ${isLight ? 'text-slate-900' : 'text-stone-100'}`}>
+              أصوات واقعية وعالية الجودة
+            </h3>
+            <p className={`text-xs sm:text-sm ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+              اختر من بين مجموعة واسعة من الأصوات المغربية المتنوعة التي تناسب جميع أنواع المحتوى الإعلاني والتجاري.
+            </p>
+          </div>
+        </section>
+
         {/* Account Status / Free Trial Alert Banner */}
         {user && !isActive && !isAdmin && (
-          <div className="bg-gradient-to-r from-amber-950/60 via-stone-900 to-amber-950/40 border border-amber-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
+          <div className={`border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs ${
+            isLight 
+              ? 'bg-amber-50/90 border-amber-200/80 text-amber-950' 
+              : 'bg-gradient-to-r from-amber-950/60 via-stone-900 to-amber-950/40 border-amber-500/40'
+          }`}>
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-300">
-                <Sparkles className="w-5 h-5" />
+              <div className={`p-2 rounded-xl ${isLight ? 'bg-amber-100 text-amber-800' : 'bg-amber-500/20 text-amber-300'}`}>
+                <Sparkles className="w-5 h-5 text-amber-500" />
               </div>
               <div className="text-right">
-                <h3 className="text-xs sm:text-sm font-bold text-amber-200">
-                  أنت الآن في وضع التجربة المجانية (لديك {freeTrialsLeft} تجارب
-                  متبقية بحد أقصى {appSettings.freeTrialMaxSeconds} ثواني لكل
-                  مقطع)
+                <h3 className={`text-xs sm:text-sm font-bold ${isLight ? 'text-amber-900' : 'text-amber-200'}`}>
+                  أنت الآن في وضع التجربة المجانية (لديك {freeTrialsLeft} تجارب متبقية بحد أقصى {appSettings.freeTrialMaxSeconds} ثواني لكل مقطع)
                 </h3>
-                <p className="text-[11px] text-stone-400">
-                  من بعد التجربة تقدر تشحن الباقة المناسبة وتستعمل الرصيد حسب
-                  حاجتك، بلا تجديد شهري إجباري.
+                <p className={`text-[11px] ${isLight ? 'text-amber-800/80' : 'text-stone-400'}`}>
+                  لتفعيل حسابك بشكل دائم والاستمتاع بتوليد غير محدود لجميع الأصوات والإعلانات، تواصل معنا عبر الواتساب.
                 </p>
               </div>
             </div>
 
             <button
               onClick={() => setIsUpgradeModalOpen(true)}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition flex items-center gap-1.5"
             >
               <MessageCircle className="w-4 h-4" />
               <span>تفعيل الاشتراك وشحن النقاط</span>
@@ -335,14 +532,15 @@ export default function App() {
         )}
 
         {/* Input & TTS Controls Card */}
-        <div className="bg-stone-900/70 border border-stone-800 rounded-3xl p-5 md:p-6 shadow-xl space-y-5">
+        <div id="studio-section" className={`rounded-3xl p-5 md:p-6 border space-y-5 transition-all ${
+          isLight 
+            ? 'bg-white border-slate-200/90 shadow-sm' 
+            : 'bg-stone-900/70 border-stone-800 shadow-xl'
+        }`}>
           {/* Text Area Header */}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label
-              htmlFor="darija-text-input"
-              className="text-sm font-bold text-stone-200 flex items-center gap-1.5"
-            >
-              <Wand2 className="w-4 h-4 text-amber-400" />
+            <label htmlFor="darija-text-input" className={`text-sm font-bold flex items-center gap-1.5 ${isLight ? 'text-slate-800' : 'text-stone-200'}`}>
+              <Wand2 className="w-4 h-4 text-amber-500" />
               <span>النص المراد تحويله إلى صوت بالدارجة المغربية:</span>
             </label>
 
@@ -350,16 +548,20 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsAdScriptModalOpen(true)}
-                className="text-xs font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 px-3 py-1 rounded-lg border border-amber-500/30 flex items-center gap-1 transition"
+                className={`text-xs font-bold px-3 py-1 rounded-lg border flex items-center gap-1 transition ${
+                  isLight 
+                    ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200' 
+                    : 'text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border-amber-500/30'
+                }`}
               >
-                <Flame className="w-3 h-3 text-amber-400 fill-current" />
-                <span>اقتراح إعلان لمنتوجك بالذكاء الاصطناعي</span>
+                <Flame className="w-3 h-3 text-amber-500 fill-current" />
+                <span>صياغة نص إعلاني</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setText("")}
-                className="text-xs text-stone-500 hover:text-rose-400 transition px-1"
+                onClick={() => setText('')}
+                className={`text-xs transition px-1 ${isLight ? 'text-slate-400 hover:text-rose-600' : 'text-stone-500 hover:text-rose-400'}`}
               >
                 مسح النص
               </button>
@@ -372,46 +574,54 @@ export default function App() {
               id="darija-text-input"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="اكتب هنا أي نص بالدارجة... مثلاً: عفاك دوز ليا جوج قرعات من داك العطر الواعر والكمية محدودة!"
+              placeholder="اكتب هنا أي نص بالدارجة المغربية..."
               rows={4}
               maxLength={1500}
-              className="w-full bg-stone-950/80 border border-stone-800 focus:border-amber-500 rounded-2xl p-4 text-base md:text-lg text-stone-100 placeholder-stone-600 focus:outline-none focus:ring-1 focus:ring-amber-500/50 leading-relaxed font-sans resize-y transition"
+              className={`w-full rounded-2xl p-4 text-base md:text-lg leading-relaxed font-sans resize-y transition border focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                isLight 
+                  ? 'bg-slate-50 border-slate-200 focus:border-amber-500 focus:bg-white text-slate-900 placeholder-slate-400' 
+                  : 'bg-stone-950/80 border-stone-800 focus:border-amber-500 text-stone-100 placeholder-stone-600'
+              }`}
             />
-            <div className="flex justify-between items-center mt-1 px-1 text-xs text-stone-500">
+            <div className={`flex justify-between items-center mt-1 px-1 text-xs ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>
               <span className="flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-stone-400" />
-                يدعم اللهجة المغربية بجميع فروعها ونصوص الإعلانات والعرنسية
-                (Franco-Arabe)
+                <Info className="w-3.5 h-3.5 text-amber-500" />
+                يدعم اللهجة المغربية بمختلف تعبيراتها ونصوص الإعلانات والعرنسية (Franco-Arabe)
               </span>
               <span>{text.length} / 1500 حرف</span>
             </div>
           </div>
 
           {/* Voice Selector */}
-          <VoiceSelector
-            voices={VOICES}
-            selectedVoice={selectedVoice}
-            onSelectVoice={setSelectedVoice}
-            isUserActive={isActive}
-            onRequireUpgrade={() => setIsUpgradeModalOpen(true)}
-          />
+          <div id="voices-section">
+            <VoiceSelector
+              voices={VOICES}
+              selectedVoice={selectedVoice}
+              onSelectVoice={setSelectedVoice}
+              isUserActive={isActive}
+              onRequireUpgrade={() => setIsUpgradeModalOpen(true)}
+              isLight={isLight}
+            />
+          </div>
 
           {/* Tone Selector */}
           <ToneSelector
             tones={TONES}
             selectedTone={selectedTone}
             onSelectTone={setSelectedTone}
+            isLight={isLight}
           />
 
           {/* Dialect Optimization Toggle */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-stone-950/50 border border-stone-800/80">
+          <div className={`flex items-center justify-between p-3 rounded-2xl border ${
+            isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-stone-950/50 border-stone-800/80 text-stone-200'
+          }`}>
             <div className="text-right">
-              <span className="text-xs font-bold text-stone-200 block">
-                تحسين النطق المغربي والإعلاني تلقائياً (Phonetic Darija Tuning)
+              <span className={`text-xs font-bold block ${isLight ? 'text-slate-800' : 'text-stone-200'}`}>
+                تحسين النطق المغربي والإعلاني تلقائياً
               </span>
-              <span className="text-[11px] text-stone-400">
-                ضبط مخارج الحروف، التسكين، والنبرة التسويقية لتبدو طبيعية
-                واحترافية 100%
+              <span className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                ضبط مخارج الحروف والتسكين لتبدو طبيعية واحترافية
               </span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -421,7 +631,9 @@ export default function App() {
                 onChange={(e) => setOptimizeDarija(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-10 h-5 bg-stone-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+              <div className={`w-10 h-5 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 ${
+                isLight ? 'bg-slate-200 after:border-slate-300' : 'bg-stone-800 after:border-stone-300'
+              }`}></div>
             </label>
           </div>
 
@@ -433,12 +645,55 @@ export default function App() {
             </div>
           )}
 
+          {/* User Account / Free Trial Status Info */}
+          {!user ? (
+            <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+              isLight ? 'bg-amber-50/70 border-amber-200 text-amber-900' : 'bg-amber-950/20 border-amber-500/20 text-amber-300/90'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>جرّب أصوات الدارجة المغربية مجاناً: <strong>2 تجارب مجانية (حتى 15 ثانية لكل تجربة)</strong> بعد تسجيل الدخول.</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAuthModalOpen(true)}
+                className="font-bold text-[11px] underline hover:text-amber-600 shrink-0"
+              >
+                تسجيل الدخول بالجمايل
+              </button>
+            </div>
+          ) : isFreeTrialUser && !isAdmin && (
+            <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+              freeTrialsLeft > 0
+                ? isLight ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300'
+                : isLight ? 'bg-rose-50/70 border-rose-200 text-rose-900' : 'bg-rose-950/20 border-rose-500/20 text-rose-300'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>
+                  {freeTrialsLeft > 0
+                    ? `رصيدك التجريبي: متبقي لديك ${freeTrialsLeft} تجارب مجانية (حتى ${appSettings.freeTrialMaxSeconds || 15} ثانية لكل تجربة)`
+                    : 'لقد استنفدت التجارب المجانية (2/2). لتوليد نصوص غير محدودة بدون اقتطاع، فعّل باقتك الآن.'}
+                </span>
+              </div>
+              {freeTrialsLeft <= 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsUpgradeModalOpen(true)}
+                  className="font-bold text-[11px] bg-amber-500 text-stone-950 px-3 py-1 rounded-lg shrink-0 shadow-xs"
+                >
+                  تفعيل الباقة
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Generate Button */}
           <button
             type="button"
             onClick={() => handleGenerateTTS()}
             disabled={isLoading || !text.trim()}
-            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 font-black text-base md:text-lg shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 flex items-center justify-center gap-2.5 transition-all transform active:scale-[0.99]"
+            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 disabled:cursor-not-allowed text-stone-950 font-black text-base md:text-lg shadow-md shadow-amber-500/20 hover:shadow-amber-500/30 flex items-center justify-center gap-2.5 transition-all transform active:scale-[0.99]"
           >
             {isLoading ? (
               <>
@@ -448,7 +703,7 @@ export default function App() {
             ) : (
               <>
                 <Volume2 className="w-5 h-5 stroke-[2.5]" />
-                <span>تحويل النص إلى صوت (Generate Moroccan Voiceover)</span>
+                <span>تحويل النص إلى صوت بالدارجة</span>
               </>
             )}
           </button>
@@ -463,15 +718,10 @@ export default function App() {
               vocalizedText={activeAudio.vocalizedText}
               voiceName={activeAudio.voiceName}
               toneName={activeAudio.toneName}
+              isLight={isLight}
             />
           </div>
         )}
-
-        {/* Preset Moroccan Phrases & Ad Scripts */}
-        <PresetSelector
-          presets={PRESET_PHRASES}
-          onSelectPreset={handleSelectPreset}
-        />
 
         {/* History List */}
         <HistoryList
@@ -485,16 +735,83 @@ export default function App() {
               toneName: item.tone,
             });
           }}
-          onClearHistory={() => setHistory([])}
+          onClearHistory={() => saveHistoryList([])}
+          isLight={isLight}
         />
 
-        {/* Customer Reviews & Social Proof Section */}
-        <ReviewsSection
-          reviews={reviews}
-          userEmail={user?.email || undefined}
-          userName={userProfile?.displayName || user?.displayName || undefined}
-        />
+        {/* Customer Reviews & Testimonials Section */}
+        <div id="reviews-section" className="pt-6">
+          <ReviewsSection isLight={isLight} />
+        </div>
       </main>
+
+      {/* Modern Footer matching Competitor Design */}
+      <footer className={`mt-16 border-t transition-colors ${
+        isLight ? 'bg-white border-slate-200 text-slate-600' : 'bg-stone-900/60 border-stone-800 text-stone-400'
+      }`}>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-right">
+          {/* Logo & description */}
+          <div 
+            onClick={() => setIsBrandModalOpen(true)}
+            className="flex items-center gap-3 cursor-pointer group"
+            title="انقر لمعاينة وتحميل الشعار الرسمي"
+          >
+            <DarijaVoiceLogo size="md" showText={false} isLight={isLight} interactive={true} />
+            <div>
+              <span className={`font-black text-sm block group-hover:text-amber-500 transition ${isLight ? 'text-slate-900' : 'text-white'}`}>صوت الدارجة (DARIJAVOICES)</span>
+              <p className="text-xs opacity-75">أول منصة ذكاء اصطناعي مغربية متخصصة في التعليق الصوتي الواقعي بالدارجة (انقر لتفاصيل الشعار)</p>
+            </div>
+          </div>
+
+          {/* Quick Links */}
+          <div className="flex flex-wrap justify-center items-center gap-4 text-xs font-semibold">
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              className="hover:text-amber-500 transition"
+            >
+              الرئيسية
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('voices-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="hover:text-amber-500 transition"
+            >
+              الأصوات
+            </button>
+            <button
+              onClick={() => setIsUpgradeModalOpen(true)}
+              className="hover:text-amber-500 transition"
+            >
+              باقات الأسعار
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('reviews-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="hover:text-amber-500 transition"
+            >
+              آراء العملاء
+            </button>
+            <a
+              href={`https://wa.me/${cleanWhatsAppNumber}?text=${encodeURIComponent('السلام عليكم، مهتم بمنصة صوت الدارجة المغربية')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-500 hover:text-emerald-400 font-bold transition flex items-center gap-1"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>تواصل عبر واتساب</span>
+            </a>
+          </div>
+
+          {/* Copyright */}
+          <div className="text-xs opacity-60 font-mono" dir="ltr">
+            © {new Date().getFullYear()} DarijaVoices. All rights reserved.
+          </div>
+        </div>
+      </footer>
 
       {/* Modals */}
       <AuthModal
@@ -510,7 +827,14 @@ export default function App() {
       <UpgradeModal
         isOpen={isUpgradeModalOpen}
         onClose={() => setIsUpgradeModalOpen(false)}
-        onOpenAuth={() => setIsAuthModalOpen(true)}
+      />
+
+      {/* Low Token Balance Toast Alert */}
+      <LowBalanceToast
+        tokens={userProfile?.tokens ?? 0}
+        threshold={50}
+        isOpen={Boolean(user && userProfile && userProfile.status === 'active' && userProfile.role !== 'admin')}
+        onUpgradeClick={() => setIsUpgradeModalOpen(true)}
       />
 
       <ArabiziConverterModal
@@ -532,6 +856,12 @@ export default function App() {
           }
           handleGenerateTTS(scriptText, recommendedVoice);
         }}
+      />
+
+      <BrandShowcaseModal
+        isOpen={isBrandModalOpen}
+        onClose={() => setIsBrandModalOpen(false)}
+        isLight={isLight}
       />
     </div>
   );

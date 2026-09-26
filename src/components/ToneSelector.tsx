@@ -6,6 +6,7 @@ interface ToneSelectorProps {
   tones: ToneOption[];
   selectedTone: string;
   onSelectTone: (toneId: string) => void;
+  isLight?: boolean;
 }
 
 const getIcon = (iconName: string) => {
@@ -29,15 +30,16 @@ export const ToneSelector: React.FC<ToneSelectorProps> = ({
   tones,
   selectedTone,
   onSelectTone,
+  isLight = false,
 }) => {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-sm font-semibold text-stone-200 flex items-center gap-1.5">
-          <Sparkles className="w-4 h-4 text-amber-400" />
+        <label className={`text-sm font-semibold flex items-center gap-1.5 ${isLight ? 'text-slate-800' : 'text-stone-200'}`}>
+          <Sparkles className="w-4 h-4 text-amber-500" />
           <span>أسلوب ونبرة الإلقاء</span>
         </label>
-        <span className="text-xs text-stone-400">طريقة الحديث والمشاعر</span>
+        <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>طريقة الحديث والمشاعر</span>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -50,8 +52,10 @@ export const ToneSelector: React.FC<ToneSelectorProps> = ({
               onClick={() => onSelectTone(tone.id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all duration-150 ${
                 isSelected
-                  ? 'bg-amber-500 text-stone-950 border-amber-400 font-semibold shadow-sm shadow-amber-500/20'
-                  : 'bg-stone-900/60 border-stone-800 text-stone-300 hover:bg-stone-800 hover:text-white'
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-xs'
+                  : isLight
+                    ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+                    : 'bg-stone-900/60 border-stone-800 text-stone-300 hover:bg-stone-800 hover:text-white'
               }`}
             >
               {getIcon(tone.icon)}

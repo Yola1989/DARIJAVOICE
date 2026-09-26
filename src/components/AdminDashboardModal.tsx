@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from "react";
-import { useAuth, isUserAdminEmail } from "../context/AuthContext";
-import { db } from "../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../lib/firebase';
 import {
-  UserProfile,
-  AppSettings,
-  CustomerReview,
-  SubscriptionRequest,
-} from "../types";
-import { apiFetch } from "../lib/api";
-
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  doc,
+  updateDoc,
+  deleteDoc,
+  setDoc,
+  addDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { UserProfile, AppSettings, ReviewItem } from '../types';
 import {
   Users,
   ShieldCheck,
@@ -19,28 +23,20 @@ import {
   Coins,
   Search,
   Settings,
-  RefreshCw,
   PhoneCall,
   Save,
   Clock,
   Sparkles,
-  Sliders,
-  Trash2,
+  Gift,
   X,
-  CreditCard,
-  Send,
+  RefreshCw,
   Star,
   Eye,
   EyeOff,
-  MessageSquare,
-  PackageCheck,
-  Zap,
-  ExternalLink,
-  Copy,
-  AlertTriangle,
-  Loader2,
-  CheckCircle2,
-} from "lucide-react";
+  Trash2,
+  MessageSquareQuote,
+  Download,
+} from 'lucide-react';
 
 interface AdminDashboardModalProps {
   isOpen: boolean;
@@ -51,19 +47,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { user, userProfile, appSettings } = useAuth();
+  const { userProfile, appSettings } = useAuth();
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
-  const [reviewsList, setReviewsList] = useState<CustomerReview[]>([]);
-  const [requestsList, setRequestsList] = useState<SubscriptionRequest[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [requestsFilter, setRequestsFilter] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState<
-    "requests" | "users" | "reviews" | "pricing" | "settings"
-  >("requests");
+  const [reviewsList, setReviewsList] = useState<ReviewItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [activeTab, setActiveTab] = useState<'users' | 'reviews' | 'pricing' | 'settings'>('users');
   const [loading, setLoading] = useState(true);
-  const [activatingReqId, setActivatingReqId] = useState<string | null>(null);
-  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  // New review modal state
+  const [isAddReviewModalOpen, setIsAddReviewModalOpen] = useState(false);
+  const [newReviewAuthor, setNewReviewAuthor] = useState('');
+  const [newReviewRole, setNewReviewRole] = useState('');
+  const [newReviewRating, setNewReviewRating] = useState(5);
+  const [newReviewComment, setNewReviewComment] = useState('');
+  const [addingReview, setAddingReview] = useState(false);
 
   // Settings form state
   const [settingsForm, setSettingsForm] = useState<AppSettings>(appSettings);
@@ -71,21 +69,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
   // Selected user for editing tokens / status
-  const [selectedUserEdit, setSelectedUserEdit] = useState<UserProfile | null>(
-    null,
-  );
-  const [addTokensAmount, setAddTokensAmount] = useState<number>(500);
+  const [selectedUserEdit, setSelectedUserEdit] = useState<UserProfile | null>(null);
+  const [selectedPlanTier, setSelectedPlanTier] = useState<'mini' | 'starter' | 'pro' | 'business' | 'custom'>('pro');
+  const [addTokensAmount, setAddTokensAmount] = useState<number>(108000);
+  const [validityMonthsInput, setValidityMonthsInput] = useState<number>(6);
 
   useEffect(() => {
-    setSettingsForm(appSettings);
+    setSettingsForm({
+      ...appSettings,
+      businessPriceMAD: (!appSettings.businessPriceMAD || appSettings.businessPriceMAD < 500) ? 599 : appSettings.businessPriceMAD,
+    });
   }, [appSettings]);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    // Fetch and Subscribe to Users
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, orderBy("createdAt", "desc"));
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, orderBy('createdAt', 'desc'));
 
     const unsubscribeUsers = onSnapshot(
       q,
@@ -98,109 +98,104 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         setLoading(false);
       },
       (err) => {
-        console.error("Error fetching users:", err);
+        console.error('Error fetching users:', err);
         setLoading(false);
-      },
+      }
     );
 
-    // Fetch subscription requests through the authenticated Admin API.
-    const fetchServerRequests = () => {
-      apiFetch<{ requests: SubscriptionRequest[] }>("/api/subscriptions")
-        .then((data) => {
-          if (data.requests && Array.isArray(data.requests)) {
-            setRequestsList(
-              [...data.requests].sort(
-                (a, b) =>
-                  new Date(b.createdAt || "").getTime() -
-                  new Date(a.createdAt || "").getTime(),
-              ),
-            );
-          }
-        })
-        .catch((error) =>
-          console.error("Fetching subscriptions failed:", error),
-        );
-    };
-
-    fetchServerRequests();
-    const intervalReqs = setInterval(fetchServerRequests, 3000);
-
-    const requestsRef = collection(db, "subscription_requests");
-    const qReqs = query(requestsRef, orderBy("createdAt", "desc"));
-
-    const unsubscribeRequests = onSnapshot(
-      qReqs,
-      (snapshot) => {
-        const reqs: SubscriptionRequest[] = [];
-        snapshot.forEach((docSnap) => {
-          reqs.push({
-            id: docSnap.id,
-            ...(docSnap.data() as Omit<SubscriptionRequest, "id">),
-          });
-        });
-        setRequestsList((prev) => {
-          const combined = [...reqs, ...prev];
-          const uniqueMap = new Map<string, SubscriptionRequest>();
-          combined.forEach((item) => {
-            if (!uniqueMap.has(item.id)) uniqueMap.set(item.id, item);
-          });
-          return Array.from(uniqueMap.values()).sort(
-            (a, b) =>
-              new Date(b.createdAt || "").getTime() -
-              new Date(a.createdAt || "").getTime(),
-          );
-        });
-      },
-      (err) => {
-        console.warn(
-          "Error fetching subscription requests from Firestore:",
-          err,
-        );
-      },
-    );
-
-    // Fetch and Subscribe to reviews
-
-    const reviewsRef = collection(db, "reviews");
+    const reviewsRef = collection(db, 'reviews');
+    const qReviews = query(reviewsRef, orderBy('createdAt', 'desc'));
     const unsubscribeReviews = onSnapshot(
-      reviewsRef,
+      qReviews,
       (snapshot) => {
-        const revs: CustomerReview[] = [];
+        const revs: ReviewItem[] = [];
         snapshot.forEach((docSnap) => {
+          const d = docSnap.data();
           revs.push({
             id: docSnap.id,
-            ...(docSnap.data() as Omit<CustomerReview, "id">),
+            authorName: d.authorName || 'مستخدم',
+            authorRole: d.authorRole || '',
+            rating: d.rating || 5,
+            comment: d.comment || '',
+            status: d.status || 'approved',
+            userId: d.userId,
+            userEmail: d.userEmail,
+            createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : d.createdAt || new Date().toISOString(),
           });
         });
         setReviewsList(revs);
       },
       (err) => {
-        console.warn("Error fetching reviews from Firestore:", err);
-      },
+        console.error('Error fetching reviews:', err);
+      }
     );
 
     return () => {
-      clearInterval(intervalReqs);
       unsubscribeUsers();
-      unsubscribeRequests();
       unsubscribeReviews();
     };
   }, [isOpen]);
 
+  // Action: Toggle Review Visibility (Approved vs Hidden)
+  const handleToggleReviewStatus = async (rev: ReviewItem) => {
+    const nextStatus = rev.status === 'approved' ? 'hidden' : 'approved';
+    try {
+      const ref = doc(db, 'reviews', rev.id);
+      await updateDoc(ref, {
+        status: nextStatus,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error('Error toggling review status:', err);
+    }
+  };
+
+  // Action: Delete Review
+  const handleDeleteReview = async (id: string) => {
+    if (!window.confirm('هل أنت متأكد من رغبتك في حذف هذا التقييم نهائياً؟')) return;
+    try {
+      await deleteDoc(doc(db, 'reviews', id));
+    } catch (err) {
+      console.error('Error deleting review:', err);
+    }
+  };
+
+  // Action: Add Admin Review manually
+  const handleAddAdminReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newReviewAuthor.trim() || !newReviewComment.trim()) return;
+    setAddingReview(true);
+    try {
+      await addDoc(collection(db, 'reviews'), {
+        authorName: newReviewAuthor.trim(),
+        authorRole: newReviewRole.trim() || 'عميل موثق',
+        rating: Number(newReviewRating) || 5,
+        comment: newReviewComment.trim(),
+        status: 'approved',
+        userId: userProfile?.id || null,
+        userEmail: userProfile?.email || null,
+        createdAt: serverTimestamp(),
+      });
+      setIsAddReviewModalOpen(false);
+      setNewReviewAuthor('');
+      setNewReviewRole('');
+      setNewReviewComment('');
+    } catch (err) {
+      console.error('Error creating review:', err);
+    } finally {
+      setAddingReview(false);
+    }
+  };
+
   if (!isOpen) return null;
 
-  const isAdmin =
-    userProfile?.role === "admin" || isUserAdminEmail(user?.email);
-
   // Verify Admin role
-  if (!isAdmin) {
+  if (userProfile?.role !== 'admin') {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm" dir="rtl">
         <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 max-w-sm text-center">
           <ShieldCheck className="w-12 h-12 text-rose-500 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-stone-100 mb-1">
-            غير مصرح لك بالدخول
-          </h3>
+          <h3 className="text-base font-bold text-stone-100 mb-1">غير مصرح لك بالدخول</h3>
           <p className="text-xs text-stone-400 mb-4">
             هذه اللوحة مخصصة فقط لمدير الموقع (Admin) للتحكم بالمشتركين والنقاط.
           </p>
@@ -218,127 +213,150 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   // Filter Users
   const filteredUsers = usersList.filter((u) => {
     const matchSearch =
-      (u.email || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (u.displayName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (u.id || "").includes(searchQuery);
+      (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.displayName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.id || '').includes(searchQuery);
 
-    if (filterStatus === "all") return matchSearch;
+    if (filterStatus === 'all') return matchSearch;
     return matchSearch && u.status === filterStatus;
   });
 
   // Action: Toggle Status (Activate / Suspend)
   const handleToggleStatus = async (userToUpdate: UserProfile) => {
-    const newStatus = userToUpdate.status === "active" ? "pending" : "active";
+    const newStatus = userToUpdate.status === 'active' ? 'pending' : 'active';
     try {
-      await apiFetch(`/api/admin/users/${userToUpdate.id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: newStatus }),
+      const userRef = doc(db, 'users', userToUpdate.id);
+      await updateDoc(userRef, {
+        status: newStatus,
+        updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      console.error("Error updating status:", err);
-      alert(err instanceof Error ? err.message : "تعذر تحديث حالة الحساب.");
+      console.error('Error updating status:', err);
     }
   };
 
-  // Action: Add / Set Tokens
-  const handleAddTokens = async (userId: string) => {
+  // Action: Add / Recharge Tokens with Plan Expiry and 10-Minute Launch Bonus logic
+  const handleRechargeUser = async (targetUser: UserProfile) => {
     try {
-      await apiFetch(`/api/admin/users/${userId}/tokens`, {
-        method: "PATCH",
-        body: JSON.stringify({ amount: Number(addTokensAmount) }),
-      });
+      const userRef = doc(db, 'users', targetUser.id);
+      const settingsRef = doc(db, 'settings', 'global');
+      const now = new Date();
+
+      // Calculate expiration: strictly replace old validity
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + Number(validityMonthsInput || 3));
+
+      // Launch Bonus Check: First 100 paying customers get 10 minutes free on FIRST charge automatically
+      let bonusTokens = 0;
+      let grantBonus = false;
+      const bonusLimit = appSettings.launchBonusLimit || 100;
+      const claimedCount = appSettings.launchBonusClaimedCount || 0;
+
+      if (
+        appSettings.launchBonusEnabled !== false &&
+        !targetUser.launchBonusGrantedAt &&
+        claimedCount < bonusLimit
+      ) {
+        grantBonus = true;
+        // 10 minutes = 600 seconds * 10 tokens/sec = 6000 tokens
+        const bonusMinutes = appSettings.launchBonusMinutes || 10;
+        bonusTokens = bonusMinutes * 60 * (appSettings.tokensPerSecond || 10);
+      }
+
+      // STRICT RULE: Renewal replaces old balance completely (التجديد كيعوض الرصيد القديم)
+      const finalTokens = Number(addTokensAmount) + bonusTokens;
+
+      const userUpdatePayload: any = {
+        tokens: finalTokens,
+        status: 'active',
+        subscriptionTier: selectedPlanTier === 'custom' ? 'starter' : selectedPlanTier,
+        creditsExpireAt: expiryDate.toISOString(),
+        updatedAt: now.toISOString(),
+      };
+
+      if (grantBonus) {
+        userUpdatePayload.launchBonusGrantedAt = now.toISOString();
+        userUpdatePayload.launchBonusMinutes = appSettings.launchBonusMinutes || 10;
+        // Increment global claimed count
+        await updateDoc(settingsRef, {
+          launchBonusClaimedCount: claimedCount + 1,
+        });
+      }
+
+      await updateDoc(userRef, userUpdatePayload);
       setSelectedUserEdit(null);
     } catch (err) {
-      console.error("Error adding tokens:", err);
-      alert(err instanceof Error ? err.message : "تعذر شحن الرصيد.");
+      console.error('Error recharging user:', err);
     }
   };
 
-  // Action: Update Tier with exact plan tokens
-  const handleSetTier = async (
-    userId: string,
-    tier: "free" | "mini" | "starter" | "pro" | "business" | "unlimited",
-  ) => {
+  // Action: Direct Tier assignment (also includes auto 10-min launch bonus if user is eligible!)
+  const handleSetTier = async (targetUser: UserProfile, tier: 'free' | 'mini' | 'starter' | 'pro' | 'business' | 'unlimited') => {
     try {
-      await apiFetch(`/api/admin/users/${userId}/tier`, {
-        method: "PATCH",
-        body: JSON.stringify({ tier }),
-      });
+      const userRef = doc(db, 'users', targetUser.id);
+      const settingsRef = doc(db, 'settings', 'global');
+      const now = new Date();
+
+      let baseTokens = 0;
+      let months = 3;
+
+      if (tier === 'mini') {
+        baseTokens = 18000;
+        months = 3;
+      } else if (tier === 'starter') {
+        baseTokens = 36000;
+        months = 3;
+      } else if (tier === 'pro') {
+        baseTokens = 108000;
+        months = 6;
+      } else if (tier === 'business') {
+        baseTokens = 432000;
+        months = 12;
+      } else if (tier === 'unlimited') {
+        baseTokens = 999999;
+        months = 120;
+      }
+
+      // Launch Bonus Check: First 100 paying customers get 10 minutes free on FIRST charge automatically
+      let bonusTokens = 0;
+      let grantBonus = false;
+      const bonusLimit = appSettings.launchBonusLimit || 100;
+      const claimedCount = appSettings.launchBonusClaimedCount || 0;
+
+      if (
+        tier !== 'free' &&
+        appSettings.launchBonusEnabled !== false &&
+        !targetUser.launchBonusGrantedAt &&
+        claimedCount < bonusLimit
+      ) {
+        grantBonus = true;
+        const bonusMinutes = appSettings.launchBonusMinutes || 10;
+        bonusTokens = bonusMinutes * 60 * (appSettings.tokensPerSecond || 10);
+      }
+
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + months);
+
+      const updateData: any = {
+        subscriptionTier: tier,
+        status: tier === 'free' ? 'pending' : 'active',
+        tokens: baseTokens + bonusTokens,
+        creditsExpireAt: tier === 'free' ? null : expiryDate.toISOString(),
+        updatedAt: now.toISOString(),
+      };
+
+      if (grantBonus) {
+        updateData.launchBonusGrantedAt = now.toISOString();
+        updateData.launchBonusMinutes = appSettings.launchBonusMinutes || 10;
+        await updateDoc(settingsRef, {
+          launchBonusClaimedCount: claimedCount + 1,
+        });
+      }
+
+      await updateDoc(userRef, updateData);
     } catch (err) {
-      console.error("Error updating tier:", err);
-      alert(err instanceof Error ? err.message : "تعذر تغيير الباقة.");
+      console.error('Error updating tier:', err);
     }
-  };
-
-  // Action: Approve & Activate Subscription Request
-  const handleApproveRequest = async (req: SubscriptionRequest) => {
-    setActivatingReqId(req.id);
-    setActionSuccessMsg(null);
-    try {
-      await apiFetch(`/api/subscriptions/${req.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "approved" }),
-      });
-
-      setRequestsList((prev) =>
-        prev.map((item) =>
-          item.id === req.id
-            ? {
-                ...item,
-                status: "approved",
-                approvedAt: new Date().toISOString(),
-              }
-            : item,
-        ),
-      );
-
-      setActionSuccessMsg(
-        `✅ تم تفعيل حساب ${req.userEmail} بنجاح وشحن باقة ${req.planName} (${(req.tokensCount || 0).toLocaleString()} نقطة)!`,
-      );
-      setTimeout(() => setActionSuccessMsg(null), 6000);
-    } catch (err: any) {
-      console.error("Error approving request:", err);
-      alert(
-        "حدث خطأ أثناء تفعيل الحساب: " +
-          (err?.message || "يرجى المحاولة مجدداً"),
-      );
-    } finally {
-      setActivatingReqId(null);
-    }
-  };
-
-  const handleRejectRequest = async (reqId: string) => {
-    try {
-      await apiFetch(`/api/subscriptions/${reqId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "rejected" }),
-      });
-    } catch (err) {
-      console.error("Rejecting subscription failed:", err);
-      alert(err instanceof Error ? err.message : "تعذر رفض الطلب.");
-      return;
-    }
-
-    setRequestsList((prev) =>
-      prev.map((item) =>
-        item.id === reqId ? { ...item, status: "rejected" } : item,
-      ),
-    );
-  };
-
-  const handleDeleteRequest = async (reqId: string) => {
-    if (!window.confirm("هل أنت متأكد من حذف هذا الطلب؟")) return;
-    try {
-      await apiFetch(`/api/subscriptions/${reqId}`, {
-        method: "DELETE",
-      });
-    } catch (err) {
-      console.error("Deleting subscription failed:", err);
-      alert(err instanceof Error ? err.message : "تعذر حذف الطلب.");
-      return;
-    }
-
-    setRequestsList((prev) => prev.filter((item) => item.id !== reqId));
   };
 
   // Save Global Settings
@@ -346,448 +364,124 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     e.preventDefault();
     setSavingSettings(true);
     try {
-      await apiFetch("/api/admin/settings", {
-        method: "PATCH",
-        body: JSON.stringify(settingsForm),
-      });
+      await setDoc(doc(db, 'settings', 'global'), {
+        ...settingsForm,
+        businessPriceMAD: settingsForm.businessPriceMAD || 599,
+      }, { merge: true });
       setSettingsSuccess(true);
       setTimeout(() => setSettingsSuccess(false), 2500);
     } catch (err) {
-      console.error("Error saving settings:", err);
-      alert(err instanceof Error ? err.message : "تعذر حفظ الإعدادات.");
+      console.error('Error saving settings:', err);
     } finally {
       setSavingSettings(false);
     }
   };
 
-  const pendingRequestsCount = requestsList.filter(
-    (r) => r.status === "pending",
-  ).length;
-
-  const filteredRequests = requestsList.filter((r) => {
-    const matchSearch =
-      (r.userEmail || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (r.userName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (r.planName || "").toLowerCase().includes(searchQuery.toLowerCase());
-    const matchStatus = requestsFilter === "all" || r.status === requestsFilter;
-    return matchSearch && matchStatus;
-  });
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div
-        className="bg-stone-900 border border-amber-500/30 rounded-3xl w-full max-w-5xl h-[94vh] sm:h-[90vh] flex flex-col overflow-hidden shadow-2xl relative text-right my-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200" dir="rtl">
+      <div className="bg-stone-900 border border-amber-500/30 rounded-3xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden shadow-2xl relative text-right">
         {/* Top Header */}
-        <div className="p-3 sm:p-5 md:p-6 border-b border-stone-800 bg-stone-950/70 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5 sm:gap-3">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center font-black shadow-md shrink-0">
-              <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
+        <div className="p-4 md:p-6 border-b border-stone-800 bg-stone-950/60 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center font-black shadow-md">
+              <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm sm:text-base md:text-lg font-black text-white">
-                  لوحة تحكم المدير
-                </h2>
+                <h2 className="text-base md:text-lg font-black text-white">لوحة تحكم المدير (Admin Dashboard)</h2>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  VIP 👑
+                  حساب المدير مفعل 👑
                 </span>
               </div>
-              <p className="text-[11px] text-stone-400">
-                إدارة طلبات الاشتراكات، شحن النقاط (Tokens)، وتفعيل الحسابات
-              </p>
+              <p className="text-xs text-stone-400">إدارة المشتركين، شحن الباقات، وتحديد مدة الصلاحية</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+          <div className="flex items-center gap-2">
             {/* Tabs */}
-            <div className="flex bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs font-bold overflow-x-auto gap-1">
+            <div className="flex bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs font-bold">
               <button
-                type="button"
-                onClick={() => setActiveTab("requests")}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 ${
-                  activeTab === "requests"
-                    ? "bg-amber-500 text-stone-950"
-                    : "text-stone-400 hover:text-stone-200"
-                }`}
-              >
-                <PackageCheck className="w-3.5 h-3.5" />
-                <span>طلبات الاشتراكات</span>
-                {pendingRequestsCount > 0 && (
-                  <span className="bg-rose-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono animate-pulse">
-                    {pendingRequestsCount} جديد
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("users")}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
-                  activeTab === "users"
-                    ? "bg-amber-500 text-stone-950"
-                    : "text-stone-400 hover:text-stone-200"
+                onClick={() => setActiveTab('users')}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === 'users' ? 'bg-amber-500 text-stone-950' : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
                 المستخدمين ({usersList.length})
               </button>
               <button
-                type="button"
-                onClick={() => setActiveTab("reviews")}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 ${
-                  activeTab === "reviews"
-                    ? "bg-amber-500 text-stone-950"
-                    : "text-stone-400 hover:text-stone-200"
+                onClick={() => setActiveTab('reviews')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                  activeTab === 'reviews' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
-                <Star className="w-3.5 h-3.5" />
-                <span>التقييمات ({reviewsList.length})</span>
+                <MessageSquareQuote className="w-3.5 h-3.5" />
+                <span>التعليقات والتقييمات ({reviewsList.length})</span>
               </button>
               <button
-                type="button"
-                onClick={() => setActiveTab("pricing")}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
-                  activeTab === "pricing"
-                    ? "bg-amber-500 text-stone-950"
-                    : "text-stone-400 hover:text-stone-200"
+                onClick={() => setActiveTab('pricing')}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === 'pricing' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
-                الأسعار
+                باقات الأسعار
               </button>
               <button
-                type="button"
-                onClick={() => setActiveTab("settings")}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
-                  activeTab === "settings"
-                    ? "bg-amber-500 text-stone-950"
-                    : "text-stone-400 hover:text-stone-200"
+                onClick={() => setActiveTab('settings')}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === 'settings' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
-                الإعدادات والواتساب
+                الإعدادات وهدية الإطلاق
               </button>
             </div>
 
+            {/* Direct Project ZIP Backup Button */}
+            <a
+              href="/darijavoices-full-backup.zip"
+              download="darijavoices-full-backup.zip"
+              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 transition shadow-sm"
+              title="تحميل نسخة احتياطية كاملة للمشروع وملفات الكود"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">تحميل كود المشروع (ZIP)</span>
+              <span className="sm:hidden">ZIP</span>
+            </a>
+
             <button
-              type="button"
               onClick={onClose}
-              className="p-2 text-stone-300 hover:text-white rounded-xl bg-stone-800/80 hover:bg-stone-700 border border-stone-700 transition shrink-0"
+              className="p-2 text-stone-400 hover:text-white rounded-xl hover:bg-stone-800 transition"
               title="إغلاق اللوحة"
-              aria-label="إغلاق"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Action Success Notification Banner */}
-        {actionSuccessMsg && (
-          <div className="bg-emerald-950 border-b border-emerald-500/40 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-300 animate-in fade-in shrink-0">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-bold">{actionSuccessMsg}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActionSuccessMsg(null)}
-              className="text-stone-400 hover:text-white p-1"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* Tab 0: Subscription Requests Management */}
-        {activeTab === "requests" && (
-          <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 space-y-4">
-            {/* Stats Summary */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-stone-950/60 border border-stone-800 p-3 rounded-2xl">
-                <span className="text-xs text-stone-400">إجمالي الطلبات</span>
-                <p className="text-lg font-black text-white">
-                  {requestsList.length}
-                </p>
-              </div>
-              <div className="bg-rose-950/30 border border-rose-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-rose-300">
-                  طلبات جديدة بانتظار التفعيل
-                </span>
-                <p className="text-lg font-black text-rose-400">
-                  {pendingRequestsCount}
-                </p>
-              </div>
-              <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-emerald-300">
-                  تم تفعيلها وشحنها
-                </span>
-                <p className="text-lg font-black text-emerald-400">
-                  {requestsList.filter((r) => r.status === "approved").length}
-                </p>
-              </div>
-              <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-amber-300">
-                  مجموع المبيعات المقدرة
-                </span>
-                <p className="text-lg font-black text-amber-400">
-                  {requestsList
-                    .filter((r) => r.status === "approved")
-                    .reduce((acc, curr) => acc + (curr.priceMAD || 0), 0)}{" "}
-                  <span className="text-xs font-normal text-stone-400">
-                    درهم
-                  </span>
-                </p>
-              </div>
-            </div>
-
-            {/* Filter & Search */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-stone-500" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ابحث بالإيميل، الاسم، أو نوع الباقة..."
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl pr-9 pl-4 py-2 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <select
-                  value={requestsFilter}
-                  onChange={(e) => setRequestsFilter(e.target.value)}
-                  className="bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-300 focus:outline-none focus:border-amber-500"
-                >
-                  <option value="all">
-                    جميع الحالات ({requestsList.length})
-                  </option>
-                  <option value="pending">
-                    ⏳ قيد الانتظار ({pendingRequestsCount})
-                  </option>
-                  <option value="approved">
-                    ✅ مفعل ومكتمل (
-                    {requestsList.filter((r) => r.status === "approved").length}
-                    )
-                  </option>
-                  <option value="rejected">
-                    ❌ ملغى (
-                    {requestsList.filter((r) => r.status === "rejected").length}
-                    )
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            {/* Requests List */}
-            <div className="flex-1 overflow-y-auto border border-stone-800/80 rounded-2xl bg-stone-950/40 divide-y divide-stone-800/60">
-              {filteredRequests.length === 0 ? (
-                <div className="p-12 text-center text-stone-500 text-xs">
-                  <PackageCheck className="w-10 h-10 text-stone-600 mx-auto mb-2 opacity-60" />
-                  <p>لا توجد طلبات تطابق بحثك حالياً.</p>
-                  <p className="text-[11px] text-stone-600 mt-1">
-                    عندما يضغط أي زائر أو مستخدم على باقة في نافذة الاشتراكات،
-                    سيظهر طلبه هنا فوراً مع إيميله وزر التفعيل المباشر.
-                  </p>
-                </div>
-              ) : (
-                filteredRequests.map((req) => {
-                  const isActivating = activatingReqId === req.id;
-                  const isPending = req.status === "pending";
-                  const isApproved = req.status === "approved";
-
-                  return (
-                    <div
-                      key={req.id}
-                      className={`p-4 transition hover:bg-stone-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
-                        isPending
-                          ? "bg-amber-950/10 border-r-4 border-r-amber-500"
-                          : ""
-                      }`}
-                    >
-                      {/* Left/Main Request Info */}
-                      <div className="space-y-1.5 flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              isPending
-                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                                : isApproved
-                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                                  : "bg-stone-800 text-stone-400"
-                            }`}
-                          >
-                            {isPending
-                              ? "⏳ قيد الانتظار والدفع"
-                              : isApproved
-                                ? "✅ مفعل ومكتمل"
-                                : "❌ ملغى"}
-                          </span>
-
-                          <span className="bg-stone-800 text-stone-200 px-2 py-0.5 rounded text-[11px] font-bold">
-                            باقة {req.planName}
-                          </span>
-
-                          <span className="text-amber-400 text-xs font-black">
-                            {req.priceMAD} درهم
-                          </span>
-
-                          <span className="text-[11px] text-stone-400">
-                            (+{(req.tokensCount || 0).toLocaleString()} نقطة)
-                          </span>
-                        </div>
-
-                        {/* Customer Email & Name */}
-                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                          <div className="flex items-center gap-1.5 bg-stone-900 px-2.5 py-1 rounded-lg border border-stone-800 text-xs">
-                            <span className="text-stone-400">
-                              إيميل الزبون:
-                            </span>
-                            <strong className="text-white font-mono">
-                              {req.userEmail}
-                            </strong>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(req.userEmail);
-                                setActionSuccessMsg(
-                                  `تم نسخ الإيميل: ${req.userEmail}`,
-                                );
-                                setTimeout(
-                                  () => setActionSuccessMsg(null),
-                                  2500,
-                                );
-                              }}
-                              className="text-stone-500 hover:text-amber-400 p-0.5"
-                              title="نسخ الإيميل"
-                            >
-                              <Copy className="w-3 h-3" />
-                            </button>
-                          </div>
-
-                          {req.userName && (
-                            <span className="text-xs text-stone-400">
-                              ({req.userName})
-                            </span>
-                          )}
-
-                          <span className="text-[10px] text-stone-500 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {req.createdAt
-                              ? new Date(req.createdAt).toLocaleString("ar-MA")
-                              : ""}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Right Action Controls */}
-                      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-                        {/* WhatsApp Message link */}
-                        <a
-                          href={[
-                            "https://",
-                            "wa.me/?text=",
-                            encodeURIComponent(
-                              `السلام عليكم، بخصوص طلبك لتفعيل باقة (${req.planName}) لحسابك (${req.userEmail}) في موقع صوت الدارجة: تم تفعيل حسابك وشحن رصيدك بنجاح! بالصحة والراحة.`,
-                            ),
-                          ].join("")}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-emerald-400 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-stone-700"
-                          title="إرسال رسالة واتساب للزبون"
-                        >
-                          <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>رد بالواتساب</span>
-                        </a>
-
-                        {/* Approve Button */}
-                        <button
-                          type="button"
-                          disabled={isActivating || isApproved}
-                          onClick={() => handleApproveRequest(req)}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-md ${
-                            isApproved
-                              ? "bg-emerald-800/60 hover:bg-emerald-700 text-emerald-100 border border-emerald-600/50"
-                              : "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white"
-                          } disabled:opacity-50`}
-                        >
-                          {isActivating ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Zap className="w-3.5 h-3.5 text-amber-300" />
-                          )}
-                          <span>
-                            {isApproved
-                              ? "تم التفعيل والشحن"
-                              : "تفعيل الحساب وشحن الباقة ⚡"}
-                          </span>
-                        </button>
-
-                        {/* Reject / Delete */}
-                        {isPending && (
-                          <button
-                            type="button"
-                            onClick={() => handleRejectRequest(req.id)}
-                            className="p-2 text-stone-400 hover:text-rose-400 rounded-xl hover:bg-stone-800 transition"
-                            title="إلغاء الطلب"
-                          >
-                            <XCircle className="w-4 h-4" />
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRequest(req.id)}
-                          className="p-2 text-stone-500 hover:text-rose-400 rounded-xl hover:bg-stone-800 transition"
-                          title="حذف من السجل"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Tab 1: Users Management */}
-        {activeTab === "users" && (
+        {activeTab === 'users' && (
           <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 space-y-4">
             {/* Stats Summary Bar */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-stone-950/60 border border-stone-800 p-3 rounded-2xl">
                 <span className="text-xs text-stone-400">إجمالي المسجلين</span>
-                <p className="text-lg font-black text-white">
-                  {usersList.length}
-                </p>
+                <p className="text-lg font-black text-white" dir="ltr">{usersList.length}</p>
               </div>
               <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-emerald-300">
-                  الحسابات المفعلة (نشطة)
-                </span>
-                <p className="text-lg font-black text-emerald-400">
-                  {usersList.filter((u) => u.status === "active").length}
+                <span className="text-xs text-emerald-300">الحسابات المفعلة (نشطة)</span>
+                <p className="text-lg font-black text-emerald-400" dir="ltr">
+                  {usersList.filter((u) => u.status === 'active').length}
                 </p>
               </div>
               <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-amber-300">
-                  بانتظار التفعيل (Pending)
-                </span>
-                <p className="text-lg font-black text-amber-400">
-                  {usersList.filter((u) => u.status === "pending").length}
+                <span className="text-xs text-amber-300">بانتظار التفعيل (Pending)</span>
+                <p className="text-lg font-black text-amber-400" dir="ltr">
+                  {usersList.filter((u) => u.status === 'pending').length}
                 </p>
               </div>
               <div className="bg-blue-950/30 border border-blue-800/40 p-3 rounded-2xl">
-                <span className="text-xs text-blue-300">
-                  مجموع النقاط الموزعة
-                </span>
-                <p className="text-lg font-black text-blue-400">
-                  {usersList
-                    .reduce((acc, u) => acc + (u.tokens || 0), 0)
-                    .toLocaleString()}
+                <span className="text-xs text-blue-300">مستفيدي بونيس الإطلاق</span>
+                <p className="text-lg font-black text-blue-400" dir="ltr">
+                  {appSettings.launchBonusClaimedCount || 0} / {appSettings.launchBonusLimit || 100}
                 </p>
               </div>
             </div>
@@ -806,511 +500,325 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5">
-                {["all", "pending", "active", "suspended"].map((st) => (
+                {['all', 'pending', 'active', 'suspended'].map((st) => (
                   <button
                     key={st}
                     onClick={() => setFilterStatus(st)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                       filterStatus === st
-                        ? "bg-amber-500 text-stone-950"
-                        : "bg-stone-800 text-stone-400 hover:text-stone-200"
+                        ? 'bg-amber-500 text-stone-950'
+                        : 'bg-stone-800 text-stone-400 hover:text-stone-200'
                     }`}
                   >
-                    {st === "all" && "الكل"}
-                    {st === "pending" && "قيد الانتظار"}
-                    {st === "active" && "المفعلين"}
-                    {st === "suspended" && "المعلقين"}
+                    {st === 'all'
+                      ? 'الكل'
+                      : st === 'pending'
+                      ? 'قيد الانتظار'
+                      : st === 'active'
+                      ? 'المفعلة'
+                      : 'المعلقة'}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Users Table / List */}
-            <div className="flex-1 overflow-y-auto border border-stone-800 rounded-2xl bg-stone-950/40 divide-y divide-stone-800/60">
+            {/* Users List */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {filteredUsers.length === 0 ? (
-                <div className="p-8 text-center text-stone-500 text-xs">
-                  لا يوجد مستخدمين يطابقون البحث.
-                </div>
+                <div className="text-center py-12 text-stone-500 text-xs">لا يوجد مستخدمين مطابقين.</div>
               ) : (
-                filteredUsers.map((u) => (
-                  <div
-                    key={u.id}
-                    className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-stone-900/50 transition"
-                  >
-                    {/* User Info */}
-                    <div className="flex items-center gap-3 min-w-[200px]">
-                      <div
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs ${
-                          u.role === "admin"
-                            ? "bg-amber-500 text-stone-950"
-                            : u.status === "active"
-                              ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
-                              : "bg-stone-800 text-stone-400"
-                        }`}
-                      >
-                        {u.displayName
-                          ? u.displayName.charAt(0).toUpperCase()
-                          : "U"}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-stone-100">
-                            {u.displayName || "مستخدم"}
-                          </span>
-                          {u.role === "admin" && (
-                            <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
-                              Admin
-                            </span>
-                          )}
+                filteredUsers.map((u) => {
+                  const isExpired = u.creditsExpireAt && new Date(u.creditsExpireAt).getTime() < Date.now();
+                  return (
+                    <div
+                      key={u.id}
+                      className="bg-stone-950/70 border border-stone-800/80 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 hover:border-stone-700 transition"
+                    >
+                      {/* User Identity */}
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-stone-800 text-stone-300 flex items-center justify-center font-bold text-xs uppercase">
+                          {u.displayName?.[0] || u.email?.[0] || 'U'}
                         </div>
-                        <span className="text-[11px] text-stone-400 font-mono block">
-                          {u.email}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-stone-100">{u.displayName || 'مستخدم'}</span>
+                            {u.role === 'admin' && (
+                              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded font-bold">
+                                مدير
+                              </span>
+                            )}
+                            {u.launchBonusGrantedAt && (
+                              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-bold flex items-center gap-0.5">
+                                <Gift className="w-2.5 h-2.5" /> أخذ البونيس
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-stone-400 font-mono" dir="ltr">{u.email}</span>
+                        </div>
+                      </div>
+
+                      {/* Status & Tokens */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[11px] px-2.5 py-1 rounded-full font-bold border ${
+                            u.status === 'active'
+                              ? isExpired
+                                ? 'bg-amber-950/60 text-amber-300 border-amber-800/50'
+                                : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/50'
+                              : u.status === 'pending'
+                              ? 'bg-amber-950/60 text-amber-300 border-amber-800/50'
+                              : 'bg-rose-950/60 text-rose-300 border-rose-800/50'
+                          }`}
+                        >
+                          {u.status === 'active'
+                            ? isExpired
+                              ? 'منتهي الصلاحية'
+                              : 'مفعل (نشط)'
+                            : u.status === 'pending'
+                            ? 'بانتظار التفعيل'
+                            : 'معلق'}
                         </span>
-                      </div>
-                    </div>
 
-                    {/* Status Badge */}
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[11px] px-2.5 py-1 rounded-full font-bold border ${
-                          u.status === "active"
-                            ? "bg-emerald-950/60 text-emerald-300 border-emerald-800/50"
-                            : u.status === "pending"
-                              ? "bg-amber-950/60 text-amber-300 border-amber-800/50"
-                              : "bg-rose-950/60 text-rose-300 border-rose-800/50"
-                        }`}
-                      >
-                        {u.status === "active"
-                          ? "مفعل (نشط)"
-                          : u.status === "pending"
-                            ? "بانتظار التفعيل"
-                            : "معلق"}
-                      </span>
+                        {/* Tokens Pill */}
+                        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-full text-xs text-amber-400 font-mono font-bold">
+                          <Coins className="w-3.5 h-3.5" />
+                          <span dir="ltr">{(u.tokens || 0).toLocaleString('en-US')}</span>
+                          <span className="text-[10px] font-normal text-stone-400">نقطة</span>
+                        </div>
 
-                      {/* Tokens Pill */}
-                      <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-full text-xs text-amber-400 font-mono font-bold">
-                        <Coins className="w-3.5 h-3.5" />
-                        <span>{u.tokens?.toLocaleString() || 0} نقطة</span>
-                      </div>
-
-                      {/* Free Trials remaining */}
-                      <span className="text-[10px] text-stone-400 bg-stone-900 px-2 py-0.5 rounded border border-stone-800">
-                        تجارب مجانية: {u.freeTrialsRemaining ?? 0}
-                      </span>
-                    </div>
-
-                    {/* Actions Buttons */}
-                    <div className="flex items-center gap-2">
-                      {/* Activate / Deactivate button */}
-                      <button
-                        onClick={() => handleToggleStatus(u)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition ${
-                          u.status === "active"
-                            ? "bg-rose-950/50 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60"
-                            : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md"
-                        }`}
-                      >
-                        {u.status === "active" ? (
-                          <>
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>إلغاء التفعيل</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="w-3.5 h-3.5" />
-                            <span>تفعيل الحساب الآن</span>
-                          </>
+                        {/* Expiry Date */}
+                        {u.creditsExpireAt && (
+                          <span className="text-[10px] text-stone-400 bg-stone-900 px-2 py-0.5 rounded border border-stone-800">
+                            صالح إلى: {new Date(u.creditsExpireAt).toLocaleDateString('ar-MA')}
+                          </span>
                         )}
-                      </button>
+                      </div>
 
-                      {/* Add Tokens Button */}
-                      <button
-                        onClick={() => setSelectedUserEdit(u)}
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 transition"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>شحن نقاط</span>
-                      </button>
+                      {/* Actions Buttons */}
+                      <div className="flex items-center gap-2">
+                        {/* Activate / Deactivate button */}
+                        <button
+                          onClick={() => handleToggleStatus(u)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition ${
+                            u.status === 'active'
+                              ? 'bg-rose-950/50 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                          }`}
+                        >
+                          {u.status === 'active' ? (
+                            <>
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>إلغاء التفعيل</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              <span>تفعيل الحساب</span>
+                            </>
+                          )}
+                        </button>
 
-                      {/* Quick Tier change */}
-                      <select
-                        value={u.subscriptionTier || "free"}
-                        onChange={(e) =>
-                          handleSetTier(u.id, e.target.value as any)
-                        }
-                        className="bg-stone-900 border border-stone-800 rounded-xl px-2 py-1.5 text-xs text-stone-300 focus:outline-none focus:border-amber-500"
-                      >
-                        <option value="free">مجاني (Free)</option>
-                        <option value="mini">باقة Mini</option>
-                        <option value="starter">باقة البداية (Starter)</option>
-                        <option value="pro">باقة المحترفين (Pro)</option>
-                        <option value="business">
-                          باقة الأعمال (Business)
-                        </option>
-                      </select>
+                        {/* Recharge Package Button */}
+                        <button
+                          onClick={() => {
+                            setSelectedUserEdit(u);
+                            setSelectedPlanTier('pro');
+                            setAddTokensAmount(108000);
+                            setValidityMonthsInput(6);
+                          }}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 transition"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>شحن باقة</span>
+                        </button>
+
+                        {/* Quick Tier change */}
+                        <select
+                          value={u.subscriptionTier || 'free'}
+                          onChange={(e) => handleSetTier(u, e.target.value as any)}
+                          className="bg-stone-900 border border-stone-800 rounded-xl px-2 py-1.5 text-xs text-stone-300 focus:outline-none focus:border-amber-500"
+                        >
+                          <option value="free">مجاني (Free)</option>
+                          <option value="mini">باقة Mini (3 أشهر)</option>
+                          <option value="starter">باقة Starter (3 أشهر)</option>
+                          <option value="pro">باقة Pro (6 أشهر)</option>
+                          <option value="business">باقة Business (12 شهر)</option>
+                          <option value="unlimited">غير محدود (VIP)</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
         )}
 
         {/* Tab 2: Pricing Packages Overview */}
-        {activeTab === "pricing" && (
+        {activeTab === 'pricing' && (
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
             <div>
-              <h3 className="text-sm font-bold text-stone-100 mb-1">
-                باقات ونماذج الاشتراك للزبائن
-              </h3>
+              <h3 className="text-sm font-bold text-stone-100 mb-1">باقات ونماذج الاشتراك مسبقة الدفع المعروضة للزبائن</h3>
               <p className="text-xs text-stone-400">
-                هذه الباقات التي تظهر للمشتركين عند طلب الشحن أو التواصل عبر
-                الواتساب:
+                هذه الباقات التي تظهر للمشتركين عند فتح نافذة الترقية والطلب عبر الواتساب:
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Mini Pack */}
               <div className="bg-stone-950 border border-stone-800 p-5 rounded-2xl relative space-y-4">
-                <span className="text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-800/30">
-                  باقة Mini
+                <span className="text-xs font-bold text-stone-300 bg-stone-900 px-2.5 py-1 rounded-full border border-stone-800 font-mono">
+                  Mini
                 </span>
                 <div className="flex items-baseline gap-1 text-2xl font-black text-white">
-                  <span>{settingsForm.miniPriceMAD}</span>
+                  <span dir="ltr" className="font-mono">{settingsForm.miniPriceMAD || 59}</span>
                   <span className="text-xs text-stone-400">درهم / شحنة</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5">
-                    ✓ <strong>18,000 نقطة</strong> (حوالي 30 دقيقة)
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ الرصيد صالح لمدة 3 أشهر
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ بلا تجديد شهري إجباري
-                  </li>
+                  <li className="flex items-center gap-1.5">✓ 30 دقيقة صوت تقريباً</li>
+                  <li className="flex items-center gap-1.5">✓ <span dir="ltr" className="font-mono font-bold">18,000</span> نقطة</li>
+                  <li className="flex items-center gap-1.5">✓ جميع الأصوات والاستعمال التجاري</li>
+                  <li className="flex items-center gap-1.5 text-amber-300 font-semibold">✓ صلاحية الرصيد: 3 أشهر</li>
                 </ul>
               </div>
 
               {/* Starter Pack */}
               <div className="bg-stone-950 border border-stone-800 p-5 rounded-2xl relative space-y-4">
-                <span className="text-xs font-bold text-amber-400 bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-800/30">
-                  باقة المبتدئين (Starter)
+                <span className="text-xs font-bold text-amber-400 bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-800/30 font-mono">
+                  Starter
                 </span>
                 <div className="flex items-baseline gap-1 text-2xl font-black text-white">
-                  <span>{settingsForm.starterPriceMAD}</span>
+                  <span dir="ltr" className="font-mono">{settingsForm.starterPriceMAD || 99}</span>
                   <span className="text-xs text-stone-400">درهم / شحنة</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5">
-                    ✓ <strong>36,000 نقطة</strong> (حوالي 60 دقيقة)
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ الرصيد صالح لمدة 3 أشهر
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ جميع الأصوات المغربية الأساسية
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ تحميل MP3/WAV بجودة عالية
-                  </li>
+                  <li className="flex items-center gap-1.5">✓ 60 دقيقة صوت تقريباً</li>
+                  <li className="flex items-center gap-1.5">✓ <span dir="ltr" className="font-mono font-bold">36,000</span> نقطة</li>
+                  <li className="flex items-center gap-1.5">✓ جميع الأصوات والاستعمال التجاري</li>
+                  <li className="flex items-center gap-1.5 text-amber-300 font-semibold">✓ صلاحية الرصيد: 3 أشهر</li>
                 </ul>
               </div>
 
               {/* Pro Pack */}
               <div className="bg-gradient-to-b from-amber-950/30 to-stone-950 border-2 border-amber-500/80 p-5 rounded-2xl relative space-y-4 shadow-xl">
-                <span className="text-xs font-bold text-stone-950 bg-amber-500 px-3 py-1 rounded-full">
+                <span className="text-xs font-bold text-stone-950 bg-amber-500 px-3 py-1 rounded-full font-mono">
                   ⭐ الأكثر طلباً (Pro)
                 </span>
                 <div className="flex items-baseline gap-1 text-2xl font-black text-amber-400">
-                  <span>{settingsForm.proPriceMAD}</span>
+                  <span dir="ltr" className="font-mono">{settingsForm.proPriceMAD || 199}</span>
                   <span className="text-xs text-stone-400">درهم / شحنة</span>
                 </div>
                 <ul className="text-xs text-stone-200 space-y-2">
-                  <li className="flex items-center gap-1.5">
-                    ✓ <strong>108,000 نقطة</strong> (حوالي 180 دقيقة)
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ الرصيد صالح لمدة 6 أشهر
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ أصوات الإعلانات الحصرية (سلمى، المهدي، أنس...)
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ صياغة وتوليد إعلانات Reels/TikTok بالـ AI
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ دعم فني وتفعيل فوري عبر الواتساب
-                  </li>
+                  <li className="flex items-center gap-1.5">✓ 180 دقيقة صوت تقريباً</li>
+                  <li className="flex items-center gap-1.5">✓ <span dir="ltr" className="font-mono font-bold">108,000</span> نقطة</li>
+                  <li className="flex items-center gap-1.5">✓ جميع الأصوات والاستعمال التجاري</li>
+                  <li className="flex items-center gap-1.5 text-amber-300 font-semibold">✓ صلاحية الرصيد: 6 أشهر</li>
                 </ul>
               </div>
 
               {/* Business Pack */}
               <div className="bg-stone-950 border border-stone-800 p-5 rounded-2xl relative space-y-4">
-                <span className="text-xs font-bold text-blue-400 bg-blue-950/40 px-2.5 py-1 rounded-full border border-blue-800/30">
-                  باقة صناع المحتوى والشركات (Business)
+                <span className="text-xs font-bold text-blue-400 bg-blue-950/40 px-2.5 py-1 rounded-full border border-blue-800/30 font-mono">
+                  Business
                 </span>
                 <div className="flex items-baseline gap-1 text-2xl font-black text-white">
-                  <span>{settingsForm.businessPriceMAD}</span>
+                  <span dir="ltr" className="font-mono">{settingsForm.businessPriceMAD || 599}</span>
                   <span className="text-xs text-stone-400">درهم / شحنة</span>
                 </div>
                 <ul className="text-xs text-stone-300 space-y-2">
-                  <li className="flex items-center gap-1.5">
-                    ✓ <strong>432,000 نقطة</strong> (حوالي 720 دقيقة)
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ جميع الأصوات وحقوق الاستعمال التجاري
-                  </li>
-                  <li className="flex items-center gap-1.5">
-                    ✓ الرصيد صالح لمدة 12 شهر
-                  </li>
+                  <li className="flex items-center gap-1.5">✓ 720 دقيقة صوت تقريباً</li>
+                  <li className="flex items-center gap-1.5">✓ <span dir="ltr" className="font-mono font-bold">432,000</span> نقطة</li>
+                  <li className="flex items-center gap-1.5">✓ جميع الأصوات والاستعمال التجاري</li>
+                  <li className="flex items-center gap-1.5 text-amber-300 font-semibold">✓ صلاحية الرصيد: 12 شهر</li>
                 </ul>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab: Customer Reviews Management */}
-        {activeTab === "reviews" && (
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <h3 className="text-sm font-bold text-stone-100 flex items-center gap-2">
-                  <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                  <span>إدارة آراء وتقييمات العملاء (Social Proof)</span>
-                </h3>
-                <p className="text-xs text-stone-400">
-                  يمكنك التحكم في إظهار أو إخفاء أي تقييم يظهر في الموقع أو حذفه
-                  بالكامل.
-                </p>
-              </div>
-
-              <div className="text-xs text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-xl border border-amber-500/20 font-bold">
-                إجمالي التقييمات: {reviewsList.length} | الظاهرة في الموقع:{" "}
-                {reviewsList.filter((r) => r.isVisible).length}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {reviewsList.map((rev) => (
-                <div
-                  key={rev.id}
-                  className={`p-4 rounded-2xl border transition-all ${
-                    rev.isVisible
-                      ? "bg-stone-950/80 border-stone-800"
-                      : "bg-stone-950/40 border-stone-900 opacity-60"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-stone-100">
-                          {rev.name}
-                        </span>
-                        {rev.verified && (
-                          <span className="text-[10px] text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-800/40">
-                            موثق
-                          </span>
-                        )}
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                            rev.isVisible
-                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                              : "bg-stone-800 text-stone-400"
-                          }`}
-                        >
-                          {rev.isVisible ? "ظاهر في الموقع" : "مخفي"}
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-stone-400">
-                        {rev.role}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-0.5 text-amber-400">
-                      {[...Array(rev.rating || 5)].map((_, i) => (
-                        <Star
-                          key={i}
-                          className="w-3.5 h-3.5 fill-amber-400 text-amber-400"
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-stone-300 bg-stone-900/60 p-2.5 rounded-xl mb-3 border border-stone-800/60 leading-relaxed">
-                    &ldquo;{rev.comment}&rdquo;
-                  </p>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-stone-800/60 text-xs">
-                    <span className="text-[10px] text-stone-500 font-mono">
-                      {rev.createdAt}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const newVis = !rev.isVisible;
-                          // Optimistic update
-                          setReviewsList((prev) =>
-                            prev.map((r) =>
-                              r.id === rev.id ? { ...r, isVisible: newVis } : r,
-                            ),
-                          );
-
-                          // Server API call
-                          try {
-                            await apiFetch(`/api/reviews/${rev.id}`, {
-                              method: "PATCH",
-                              body: JSON.stringify({ isVisible: newVis }),
-                            });
-                          } catch (error) {
-                            setReviewsList((prev) =>
-                              prev.map((r) =>
-                                r.id === rev.id
-                                  ? { ...r, isVisible: rev.isVisible }
-                                  : r,
-                              ),
-                            );
-                            alert(
-                              error instanceof Error
-                                ? error.message
-                                : "تعذر تحديث التقييم.",
-                            );
-                          }
-                        }}
-                        className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition text-[11px] ${
-                          rev.isVisible
-                            ? "bg-stone-800 hover:bg-stone-700 text-stone-300"
-                            : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                        }`}
-                      >
-                        {rev.isVisible ? (
-                          <>
-                            <EyeOff className="w-3.5 h-3.5" />
-                            <span>إخفاء من الموقع</span>
-                          </>
-                        ) : (
-                          <>
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>إظهار في الموقع</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (
-                            confirm("هل أنت متأكد من رغبتك في حذف هذا التقييم؟")
-                          ) {
-                            // Optimistic update
-                            setReviewsList((prev) =>
-                              prev.filter((r) => r.id !== rev.id),
-                            );
-
-                            // Server API call
-                            try {
-                              await apiFetch(`/api/reviews/${rev.id}`, {
-                                method: "DELETE",
-                              });
-                            } catch (error) {
-                              setReviewsList((prev) => [rev, ...prev]);
-                              alert(
-                                error instanceof Error
-                                  ? error.message
-                                  : "تعذر حذف التقييم.",
-                              );
-                            }
-                          }
-                        }}
-                        className="p-1.5 text-stone-500 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
-                        title="حذف التقييم"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Tab 3: Settings Form */}
-
-        {activeTab === "settings" && (
+        {activeTab === 'settings' && (
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
             <form onSubmit={handleSaveSettings} className="space-y-4 max-w-xl">
               <div>
                 <label className="block text-xs font-bold text-stone-200 mb-1">
-                  رقم الواتساب لاستقبال طلبات الدفع والتفعيل:
+                  رقم الواتساب لاستقبال طلبات الدفع والتفعيل والتواصل:
                 </label>
                 <div className="relative">
                   <input
                     type="text"
                     value={settingsForm.contactWhatsApp}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        contactWhatsApp: e.target.value,
-                      })
-                    }
-                    placeholder="+212600000000"
+                    onChange={(e) => setSettingsForm({ ...settingsForm, contactWhatsApp: e.target.value })}
+                    placeholder="مثال: 212612345678"
                     dir="ltr"
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
                   />
                   <PhoneCall className="w-4 h-4 text-stone-500 absolute top-3 left-3" />
                 </div>
-                <span className="text-[10px] text-stone-500">
-                  سيظهر زر مباشر في الموقع للمستخدمين للتواصل معك وتأكيد التحويل
-                  البنكي أو الكاش بلوس.
-                </span>
+                <p className="text-[11px] text-stone-400 mt-1">
+                  هذا الرقم هو الذي تفتح عليه محادثات الواتساب في زر "تواصل معنا"، الفوتر، وباقات التفعيل (أدخل الرقم بصيغة الدخول الدولي، مثلاً 212600000000).
+                </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-200 mb-1">
-                    عدد التجارب المجانية لكل مستخدم جديد:
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="10"
-                    value={settingsForm.freeTrialsDefaultCount}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        freeTrialsDefaultCount: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
-                  />
-                  <span className="text-[10px] text-stone-500">
-                    افتراضياً: تجربتان مجانيتان
-                  </span>
+              {/* Launch Bonus Configuration */}
+              <div className="bg-stone-950/90 border border-emerald-500/40 p-4 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                  <Gift className="w-4 h-4" />
+                  <span>إعدادات هدية الإطلاق (10 دقائق لأول 100 شحنة أولى)</span>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-stone-400 mb-1">الحد الأقصى للمستفيدين:</label>
+                    <input
+                      type="number"
+                      value={settingsForm.launchBonusLimit || 100}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, launchBonusLimit: Number(e.target.value) })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-stone-400 mb-1">المستفيدين الحاليين:</label>
+                    <input
+                      type="number"
+                      value={settingsForm.launchBonusClaimedCount || 0}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, launchBonusClaimedCount: Number(e.target.value) })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    />
+                  </div>
+                </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-200 mb-1">
-                    أقصى مدة للتجربة المجانية (بالثواني):
-                  </label>
-                  <input
-                    type="number"
-                    min="5"
-                    max="30"
-                    value={settingsForm.freeTrialMaxSeconds}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        freeTrialMaxSeconds: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-100 focus:border-amber-500 focus:outline-none"
-                  />
-                  <span className="text-[10px] text-stone-500">
-                    مثال: 15 ثانية (تتيح سماع جملة أو إعلان تجريبي كامل)
-                  </span>
+              {/* Free Trial Policy Configuration */}
+              <div className="bg-stone-950/90 border border-amber-500/30 p-4 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                  <Sparkles className="w-4 h-4" />
+                  <span>إعدادات التجارب المجانية للمستخدمين الجدد (Free Trials):</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-stone-400 mb-1">عدد التجارب المجانية لكل حساب:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={settingsForm.freeTrialsDefaultCount ?? 2}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, freeTrialsDefaultCount: Number(e.target.value) })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    />
+                    <span className="text-[10px] text-stone-400">الحالي: 2 تجارب مجانية</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-stone-400 mb-1">الحد الأقصى لثواني التجربة (ثوانٍ):</label>
+                    <input
+                      type="number"
+                      min={3}
+                      max={60}
+                      value={settingsForm.freeTrialMaxSeconds ?? 15}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, freeTrialMaxSeconds: Number(e.target.value) })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    />
+                    <span className="text-[10px] text-stone-400">الحالي: 15 ثانية لكل تجربة</span>
+                  </div>
                 </div>
               </div>
 
@@ -1321,79 +829,50 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 <textarea
                   rows={3}
                   value={settingsForm.paymentInstructions}
-                  onChange={(e) =>
-                    setSettingsForm({
-                      ...settingsForm,
-                      paymentInstructions: e.target.value,
-                    })
-                  }
+                  onChange={(e) => setSettingsForm({ ...settingsForm, paymentInstructions: e.target.value })}
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-xs text-stone-100 focus:border-amber-500 focus:outline-none leading-relaxed"
                 />
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div>
-                  <label className="block text-[11px] text-stone-400 mb-1">
-                    سعر باقة Mini (درهم):
-                  </label>
+                  <label className="block text-[11px] text-stone-400 mb-1">سعر Mini (درهم):</label>
                   <input
                     type="number"
-                    value={settingsForm.miniPriceMAD}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        miniPriceMAD: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    value={settingsForm.miniPriceMAD || 59}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, miniPriceMAD: Number(e.target.value) })}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    dir="ltr"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-stone-400 mb-1">
-                    سعر باقة Starter (درهم):
-                  </label>
+                  <label className="block text-[11px] text-stone-400 mb-1">سعر Starter (درهم):</label>
                   <input
                     type="number"
-                    value={settingsForm.starterPriceMAD}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        starterPriceMAD: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    value={settingsForm.starterPriceMAD || 99}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, starterPriceMAD: Number(e.target.value) })}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    dir="ltr"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-stone-400 mb-1">
-                    سعر باقة Pro (درهم):
-                  </label>
+                  <label className="block text-[11px] text-stone-400 mb-1">سعر Pro (درهم):</label>
                   <input
                     type="number"
-                    value={settingsForm.proPriceMAD}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        proPriceMAD: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    value={settingsForm.proPriceMAD || 199}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, proPriceMAD: Number(e.target.value) })}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    dir="ltr"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-stone-400 mb-1">
-                    سعر باقة Business (درهم):
-                  </label>
+                  <label className="block text-[11px] text-stone-400 mb-1">سعر Business (درهم):</label>
                   <input
                     type="number"
-                    value={settingsForm.businessPriceMAD}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        businessPriceMAD: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100"
+                    value={settingsForm.businessPriceMAD || 599}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, businessPriceMAD: Number(e.target.value) })}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2 text-xs text-stone-100 font-mono"
+                    dir="ltr"
                   />
                 </div>
               </div>
@@ -1404,9 +883,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2"
               >
                 <Save className="w-4 h-4" />
-                <span>
-                  {savingSettings ? "جاري الحفظ..." : "حفظ الإعدادات"}
-                </span>
+                <span>{savingSettings ? 'جاري الحفظ...' : 'حفظ الإعدادات'}</span>
               </button>
 
               {settingsSuccess && (
@@ -1418,6 +895,267 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           </div>
         )}
 
+        {/* Tab: Reviews & Testimonials Management */}
+        {activeTab === 'reviews' && (
+          <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 space-y-4 overflow-y-auto">
+            {/* Stats Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-stone-950/60 border border-stone-800 p-3 rounded-2xl">
+                <span className="text-xs text-stone-400">إجمالي التقييمات</span>
+                <p className="text-lg font-black text-white" dir="ltr">{reviewsList.length}</p>
+              </div>
+              <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-2xl">
+                <span className="text-xs text-emerald-300">الظاهرة في الموقع</span>
+                <p className="text-lg font-black text-emerald-400" dir="ltr">
+                  {reviewsList.filter((r) => r.status === 'approved').length}
+                </p>
+              </div>
+              <div className="bg-stone-950/40 border border-stone-800 p-3 rounded-2xl">
+                <span className="text-xs text-stone-400">المخفية من الموقع</span>
+                <p className="text-lg font-black text-stone-300" dir="ltr">
+                  {reviewsList.filter((r) => r.status === 'hidden').length}
+                </p>
+              </div>
+              <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-2xl">
+                <span className="text-xs text-amber-300">متوسط التقييم</span>
+                <p className="text-lg font-black text-amber-400" dir="ltr">
+                  {reviewsList.length > 0
+                    ? (reviewsList.reduce((acc, r) => acc + (r.rating || 5), 0) / reviewsList.length).toFixed(1)
+                    : '5.0'} ★
+                </p>
+              </div>
+            </div>
+
+            {/* Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-stone-950/60 p-3 rounded-2xl border border-stone-800">
+              <div className="flex items-center gap-2 flex-1 max-w-sm">
+                <div className="relative w-full">
+                  <Search className="w-4 h-4 text-stone-500 absolute right-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="ابحث بالاسم أو نص التعليق..."
+                    className="w-full bg-stone-900 border border-stone-800 rounded-xl pr-9 pl-3 py-2 text-xs text-stone-200 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddReviewModalOpen(true)}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>إضافة تقييم جديد</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Reviews List */}
+            <div className="space-y-3">
+              {reviewsList.length === 0 ? (
+                <div className="text-center py-12 text-stone-500 text-xs">
+                  لا توجد أي تقييمات حتى الآن. يمكنك إضافة تقييم جديد يدويًا أو انتظار تقييمات الزوار.
+                </div>
+              ) : (
+                reviewsList
+                  .filter((r) => {
+                    if (!searchQuery) return true;
+                    return (
+                      r.authorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      r.comment.toLowerCase().includes(searchQuery.toLowerCase())
+                    );
+                  })
+                  .map((rev) => {
+                    const isApproved = rev.status === 'approved';
+                    return (
+                      <div
+                        key={rev.id}
+                        className={`p-4 rounded-2xl border transition flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                          isApproved
+                            ? 'bg-stone-900/80 border-stone-800'
+                            : 'bg-stone-950/40 border-stone-800/60 opacity-70'
+                        }`}
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-xs text-stone-100">{rev.authorName}</span>
+                            {rev.authorRole && (
+                              <span className="text-[11px] text-stone-400 bg-stone-950 px-2 py-0.5 rounded-lg border border-stone-800">
+                                {rev.authorRole}
+                              </span>
+                            )}
+                            {/* Status Badge */}
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                isApproved
+                                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/50'
+                                  : 'bg-stone-800 text-stone-400 border-stone-700'
+                              }`}
+                            >
+                              {isApproved ? 'ظاهر للزوار بالموقع ✓' : 'مخفي ✕'}
+                            </span>
+                            {/* Stars */}
+                            <div className="flex items-center gap-0.5 mr-auto">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={i}
+                                  className={`w-3.5 h-3.5 ${
+                                    i < rev.rating
+                                      ? 'text-amber-400 fill-amber-400'
+                                      : 'text-stone-700'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                          <p className="text-xs text-stone-300 leading-relaxed font-sans">
+                            "{rev.comment}"
+                          </p>
+                          <span className="text-[10px] text-stone-500 font-mono block">
+                            {new Date(rev.createdAt).toLocaleString('ar-MA')}
+                          </span>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-stone-800">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleReviewStatus(rev)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                              isApproved
+                                ? 'bg-stone-800 hover:bg-stone-700 text-stone-300'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                            }`}
+                            title={isApproved ? 'إخفاء التقييم من واجهة الموقع' : 'إظهار التقييم لجميع الزوار'}
+                          >
+                            {isApproved ? (
+                              <>
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>إخفاء</span>
+                              </>
+                            ) : (
+                              <>
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>إظهار بالموقع</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteReview(rev.id)}
+                            className="p-2 text-stone-500 hover:text-rose-400 hover:bg-stone-800 rounded-xl transition"
+                            title="حذف التقييم نهائياً"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Add Review by Admin */}
+        {isAddReviewModalOpen && (
+          <div className="absolute inset-0 bg-stone-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-stone-900 border border-amber-500/50 p-6 rounded-3xl max-w-md w-full text-right shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+                <h4 className="text-sm font-bold text-stone-100 flex items-center gap-2">
+                  <MessageSquareQuote className="w-4 h-4 text-amber-400" />
+                  <span>إضافة تقييم جديد (كـ Admin)</span>
+                </h4>
+                <button
+                  onClick={() => setIsAddReviewModalOpen(false)}
+                  className="text-stone-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleAddAdminReview} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 mb-1">اسم العميل:</label>
+                  <input
+                    type="text"
+                    required
+                    value={newReviewAuthor}
+                    onChange={(e) => setNewReviewAuthor(e.target.value)}
+                    placeholder="مثال: يونس المرابط"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 mb-1">الصفة أو التخصص:</label>
+                  <input
+                    type="text"
+                    value={newReviewRole}
+                    onChange={(e) => setNewReviewRole(e.target.value)}
+                    placeholder="مثال: ميديا باير، متجر تجارة إلكترونية"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 mb-1">التقييم:</label>
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <button
+                        type="button"
+                        key={s}
+                        onClick={() => setNewReviewRating(s)}
+                        className="p-1"
+                      >
+                        <Star
+                          className={`w-5 h-5 ${
+                            s <= newReviewRating ? 'text-amber-400 fill-amber-400' : 'text-stone-700'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                    <span className="text-xs text-amber-400 mr-2 font-bold">{newReviewRating} نجوم</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 mb-1">نص التعليق / التقييم:</label>
+                  <textarea
+                    required
+                    rows={3}
+                    value={newReviewComment}
+                    onChange={(e) => setNewReviewComment(e.target.value)}
+                    placeholder="اكتب التقييم هنا..."
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-100 focus:outline-none focus:border-amber-500 leading-relaxed"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={addingReview}
+                    className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs rounded-xl shadow-md transition"
+                  >
+                    {addingReview ? 'جاري الحفظ...' : 'نشر التقييم في الموقع'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddReviewModalOpen(false)}
+                    className="px-4 py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs rounded-xl transition"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Modal: Recharge Tokens for a single user */}
         {selectedUserEdit && (
           <div className="absolute inset-0 bg-stone-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1425,7 +1163,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               <div className="flex items-center justify-between border-b border-stone-800 pb-3">
                 <h4 className="text-sm font-bold text-stone-100 flex items-center gap-2">
                   <Coins className="w-4 h-4 text-amber-400" />
-                  <span>شحن نقاط وتفعيل للمستخدم</span>
+                  <span>شحن باقة وتفعيل للمستخدم</span>
                 </h4>
                 <button
                   onClick={() => setSelectedUserEdit(null)}
@@ -1436,61 +1174,114 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               </div>
 
               <div className="bg-stone-950 p-3 rounded-xl text-xs space-y-1 text-stone-300">
-                <p>
-                  <strong>المستخدم:</strong>{" "}
-                  {selectedUserEdit.displayName || selectedUserEdit.email}
-                </p>
-                <p>
-                  <strong>الإيميل:</strong> {selectedUserEdit.email}
-                </p>
-                <p>
-                  <strong>الرصيد الحالي:</strong> {selectedUserEdit.tokens || 0}{" "}
-                  نقطة
-                </p>
+                <p><strong>المستخدم:</strong> {selectedUserEdit.displayName || selectedUserEdit.email}</p>
+                <p><strong>الإيميل:</strong> <span dir="ltr" className="font-mono">{selectedUserEdit.email}</span></p>
+                <p><strong>الرصيد الحالي:</strong> <span dir="ltr" className="font-mono font-bold">{(selectedUserEdit.tokens || 0).toLocaleString('en-US')}</span> نقطة (سيتم تعويضه بالباقة الجديدة)</p>
+                {selectedUserEdit.creditsExpireAt && (
+                  <p className="text-amber-400"><strong>الصلاحية الحالية:</strong> {new Date(selectedUserEdit.creditsExpireAt).toLocaleDateString('ar-MA')}</p>
+                )}
+                {!selectedUserEdit.launchBonusGrantedAt && (appSettings.launchBonusClaimedCount || 0) < (appSettings.launchBonusLimit || 100) && (
+                  <p className="text-emerald-400 font-bold">🎁 مؤهل لأخذ هدية الإطلاق (10 دقائق إضافية مجاناً)!</p>
+                )}
               </div>
 
+              {/* Quick Select Package */}
               <div>
                 <label className="block text-xs font-semibold text-stone-300 mb-1.5">
-                  النقاط الإضافية للشحن (Tokens):
+                  اختر الباقة المراد تفعيلها:
                 </label>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
-                  {[
-                    { label: "+18k (Mini)", val: 18000 },
-                    { label: "+36k (Starter)", val: 36000 },
-                    { label: "+108k (Pro)", val: 108000 },
-                    { label: "+432k (Business)", val: 432000 },
-                    { label: "+5k", val: 5000 },
-                    { label: "+1k", val: 1000 },
-                  ].map((item) => (
-                    <button
-                      key={item.val}
-                      type="button"
-                      onClick={() => setAddTokensAmount(item.val)}
-                      className={`p-2 rounded-xl text-[11px] font-bold border transition ${
-                        addTokensAmount === item.val
-                          ? "bg-amber-500 text-stone-950 border-amber-400"
-                          : "bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700"
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlanTier('mini');
+                      setAddTokensAmount(18000);
+                      setValidityMonthsInput(3);
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-bold border text-right transition ${
+                      selectedPlanTier === 'mini'
+                        ? 'bg-amber-500 text-stone-950 border-amber-400'
+                        : 'bg-stone-800 text-stone-300 border-stone-700'
+                    }`}
+                  >
+                    <div>باقة Mini (59 درهم)</div>
+                    <div className="text-[10px] opacity-80"><span dir="ltr" className="font-mono">18,000</span> نقطة (3 أشهر)</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlanTier('starter');
+                      setAddTokensAmount(36000);
+                      setValidityMonthsInput(3);
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-bold border text-right transition ${
+                      selectedPlanTier === 'starter'
+                        ? 'bg-amber-500 text-stone-950 border-amber-400'
+                        : 'bg-stone-800 text-stone-300 border-stone-700'
+                    }`}
+                  >
+                    <div>باقة Starter (99 درهم)</div>
+                    <div className="text-[10px] opacity-80"><span dir="ltr" className="font-mono">36,000</span> نقطة (3 أشهر)</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlanTier('pro');
+                      setAddTokensAmount(108000);
+                      setValidityMonthsInput(6);
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-bold border text-right transition ${
+                      selectedPlanTier === 'pro'
+                        ? 'bg-amber-500 text-stone-950 border-amber-400'
+                        : 'bg-stone-800 text-stone-300 border-stone-700'
+                    }`}
+                  >
+                    <div>باقة Pro (199 درهم)</div>
+                    <div className="text-[10px] opacity-80"><span dir="ltr" className="font-mono">108,000</span> نقطة (6 أشهر)</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlanTier('business');
+                      setAddTokensAmount(432000);
+                      setValidityMonthsInput(12);
+                    }}
+                    className={`p-2.5 rounded-xl text-xs font-bold border text-right transition ${
+                      selectedPlanTier === 'business'
+                        ? 'bg-amber-500 text-stone-950 border-amber-400'
+                        : 'bg-stone-800 text-stone-300 border-stone-700'
+                    }`}
+                  >
+                    <div>باقة Business (599 درهم)</div>
+                    <div className="text-[10px] opacity-80"><span dir="ltr" className="font-mono">432,000</span> نقطة (12 شهر)</div>
+                  </button>
                 </div>
+              </div>
+
+              {/* Number of months */}
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 mb-1">
+                  مدة الصلاحية (بالأشهر):
+                </label>
                 <input
                   type="number"
-                  value={addTokensAmount}
-                  onChange={(e) => setAddTokensAmount(Number(e.target.value))}
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500"
+                  value={validityMonthsInput}
+                  onChange={(e) => setValidityMonthsInput(Number(e.target.value))}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2.5 text-sm text-stone-100 focus:outline-none focus:border-amber-500 font-mono"
+                  dir="ltr"
                 />
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => handleAddTokens(selectedUserEdit.id)}
+                  onClick={() => handleRechargeUser(selectedUserEdit)}
                   className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition"
                 >
-                  تأكيد الشحن والتفعيل
+                  تأكيد الشحن وتحديث الصلاحية
                 </button>
                 <button
                   type="button"

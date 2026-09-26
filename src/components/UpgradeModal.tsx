@@ -1,313 +1,282 @@
-import React, { useState } from "react";
-import {
-  AlertCircle,
-  Check,
-  CheckCircle2,
-  Coins,
-  Loader2,
-  MessageCircle,
-  ShieldCheck,
-  Sparkles,
-  UserCheck,
-  X,
-} from "lucide-react";
-import { useAuth } from "../context/AuthContext";
-import { apiFetch } from "../lib/api";
+import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { Check, MessageCircle, X, Sparkles, User as UserIcon, RefreshCw, Gift } from 'lucide-react';
 
 interface UpgradeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenAuth?: () => void;
 }
 
-type PaidPlanId = "mini" | "starter" | "pro" | "business";
-
-interface PlanCard {
-  id: PaidPlanId;
-  name: string;
-  price: number;
-  minutes: number;
-  tokens: number;
-  validityMonths: number;
-  description: string;
-  featured?: boolean;
-}
-
-export const UpgradeModal: React.FC<UpgradeModalProps> = ({
-  isOpen,
-  onClose,
-  onOpenAuth,
-}) => {
-  const { user, userProfile, appSettings } = useAuth();
-  const [submittingPlan, setSubmittingPlan] = useState<PaidPlanId | null>(null);
-  const [submittedSuccess, setSubmittedSuccess] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose }) => {
+  const { userProfile, appSettings } = useAuth();
+  const [resetting, setResetting] = useState(false);
 
   if (!isOpen) return null;
 
-  const plans: PlanCard[] = [
-    {
-      id: "mini",
-      name: "Mini",
-      price: appSettings.miniPriceMAD,
-      minutes: 30,
-      tokens: 18_000,
-      validityMonths: 3,
-      description: "مناسبة باش تجرب الخدمة وتوجد إعلانات قصيرة.",
-    },
-    {
-      id: "starter",
-      name: "Starter",
-      price: appSettings.starterPriceMAD,
-      minutes: 60,
-      tokens: 36_000,
-      validityMonths: 3,
-      description: "لصناع المحتوى والمتاجر اللي كيخدمو بشكل منتظم.",
-    },
-    {
-      id: "pro",
-      name: "Pro",
-      price: appSettings.proPriceMAD,
-      minutes: 180,
-      tokens: 108_000,
-      validityMonths: 6,
-      description: "للإعلانات والحملات المتعددة بجميع الأصوات.",
-      featured: true,
-    },
-    {
-      id: "business",
-      name: "Business",
-      price: appSettings.businessPriceMAD,
-      minutes: 720,
-      tokens: 432_000,
-      validityMonths: 12,
-      description: "للوكالات والفرق اللي عندها حجم إنتاج كبير.",
-    },
-  ];
-  const launchBonusAvailable =
-    appSettings.launchBonusEnabled &&
-    appSettings.launchBonusClaimedCount < appSettings.launchBonusLimit;
+  const isEligibleForLaunchBonus = 
+    appSettings.launchBonusEnabled !== false &&
+    !userProfile?.launchBonusGrantedAt &&
+    (appSettings.launchBonusClaimedCount || 0) < (appSettings.launchBonusLimit || 100);
 
-  const requestPlan = async (plan: PlanCard) => {
-    setError(null);
-    setSubmittedSuccess(null);
+  const handleWhatsApp = (planName: string, price: number, minutes: number, months: number) => {
+    const phone = (appSettings.contactWhatsApp || '212600000000').replace(/[^0-9]/g, '');
+    const userEmail = userProfile?.email || 'غير مسجل';
+    const bonusText = isEligibleForLaunchBonus 
+      ? `\n🎁 (مستفيد من عرض الإطلاق: +10 دقائق مجاناً مضافة للباقة)` 
+      : '';
+    const message = encodeURIComponent(
+      `السلام عليكم خويا، بغيت نشحن باقة (${planName} - ${price} درهم - ${minutes} دقيقة صالحة ${months} أشهر).${bonusText}\nإيميل حسابي: ${userEmail}`
+    );
+    window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+  };
 
-    if (!user) {
-      onClose();
-      onOpenAuth?.();
-      return;
-    }
-
-    setSubmittingPlan(plan.id);
-
+  // Helper for admin to sync and reset database prices if old cached values were present
+  const handleFixPricesInDB = async () => {
+    if (userProfile?.role !== 'admin') return;
+    setResetting(true);
     try {
-      await apiFetch("/api/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({ planId: plan.id }),
-      });
-
-      setSubmittedSuccess(
-        `تسجل طلب باقة ${plan.name} بنجاح. تواصل معنا فالواتساب باش تأكد الأداء ويتشحن الرصيد.`,
-      );
-
-      const phone = appSettings.contactWhatsApp.replace(/[^0-9]/g, "");
-      const message = encodeURIComponent(
-        `السلام عليكم، بغيت نشحن باقة ${plan.name} بـ ${plan.price} درهم.\nإيميل الحساب: ${user.email || ""}`,
-      );
-
-      if (phone) {
-        window.setTimeout(() => {
-          const whatsAppUrl = [
-            "https://",
-            "wa.me/",
-            phone,
-            "?text=",
-            message,
-          ].join("");
-          window.open(whatsAppUrl, "_blank", "noopener,noreferrer");
-        }, 500);
-      }
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "تعذر تسجيل طلب الباقة. حاول مرة أخرى.",
-      );
+      await setDoc(doc(db, 'settings', 'global'), {
+        ...appSettings,
+        miniPriceMAD: 59,
+        starterPriceMAD: 99,
+        proPriceMAD: 199,
+        businessPriceMAD: 599,
+      }, { merge: true });
+    } catch (e) {
+      console.error(e);
     } finally {
-      setSubmittingPlan(null);
+      setResetting(false);
     }
   };
 
+  // Prices with fallback to the official ones
+  const miniPrice = appSettings.miniPriceMAD || 59;
+  const starterPrice = appSettings.starterPriceMAD || 99;
+  const proPrice = appSettings.proPriceMAD || 199;
+  const businessPrice = (appSettings.businessPriceMAD && appSettings.businessPriceMAD >= 500) 
+    ? appSettings.businessPriceMAD 
+    : 599;
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-stone-950/85 p-3 backdrop-blur-md sm:p-4 md:p-6"
-      onClick={onClose}
-    >
-      <div
-        className="relative my-auto flex max-h-[92vh] w-full max-w-5xl flex-col rounded-3xl border border-amber-500/40 bg-stone-900 p-4 text-right shadow-2xl sm:p-6"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200" dir="rtl">
+      <div className="bg-stone-900 border border-amber-500/40 rounded-3xl w-full max-w-5xl overflow-hidden shadow-2xl p-6 relative text-right max-h-[92vh] overflow-y-auto">
         <button
           onClick={onClose}
-          type="button"
-          aria-label="إغلاق"
-          className="absolute left-3 top-3 z-10 rounded-xl border border-stone-700 bg-stone-800/80 p-2 text-stone-300 transition hover:bg-stone-700 hover:text-white sm:left-4 sm:top-4"
+          className="absolute top-4 left-4 p-1.5 text-stone-400 hover:text-white rounded-xl hover:bg-stone-800 transition"
         >
-          <X className="h-5 w-5" />
+          <X className="w-5 h-5" />
         </button>
 
-        <div className="space-y-4 overflow-y-auto pr-1">
-          <div className="mx-auto max-w-2xl px-8 text-center">
-            <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-300">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>باقات رصيد مسبق الدفع</span>
-            </div>
-            <h3 className="text-xl font-black text-white sm:text-2xl">
-              خلص مرة وحدة واستعمل الرصيد على راحتك
-            </h3>
-            <p className="mt-1.5 text-xs leading-relaxed text-stone-400">
-              ما كاين لا تجديد شهري إجباري لا اقتطاع أوتوماتيكي. الرصيد صالح
-              3 أشهر فـ Mini وStarter، و6 أشهر فـ Pro، وباقة Business صالحة 12 شهر.
-            </p>
-            {launchBonusAvailable && (
-              <p className="mt-2 text-xs font-bold text-emerald-300">
-                🎁 أول {appSettings.launchBonusLimit} زبون مؤدٍ كياخذ {appSettings.launchBonusMinutes} دقائق هدية فالشحنة الأولى.
-              </p>
-            )}
+        {/* Modal Top Badge & Title */}
+        <div className="text-center max-w-2xl mx-auto mb-5">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold mb-3">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>باقات رصيد مسبق الدفع</span>
           </div>
+          <h3 className="text-2xl md:text-3xl font-black text-white tracking-tight">
+            خلص مرة وحدة واستعمل الرصيد على راحتك
+          </h3>
+          <p className="text-xs text-stone-400 mt-2 leading-relaxed">
+            ما كاين لا تجديد شهري إجباري لا اقتطاع أوتوماتيكي. الرصيد صالح 3 أشهر فـ Mini و Starter، و6 أشهر فـ Pro، وباقة Business صالحة 12 شهر.
+          </p>
 
-          <div className="rounded-2xl border border-stone-800 bg-stone-950/80 p-3.5">
-            {user ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
-                    <UserCheck className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <span className="text-stone-400">الحساب الحالي: </span>
-                    <strong className="font-mono text-amber-300">
-                      {userProfile?.email || user.email}
-                    </strong>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 rounded-lg border border-stone-800 bg-stone-900 px-2.5 py-1 text-stone-300">
-                  <Coins className="h-3.5 w-3.5 text-amber-400" />
-                  <span>
-                    {(userProfile?.tokens || 0).toLocaleString()} نقطة
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center gap-2 text-xs text-amber-300">
-                <ShieldCheck className="h-4 w-4" />
-                <span>سجل الدخول أولاً باش يتربط طلب الشحن بحسابك الصحيح.</span>
-              </div>
-            )}
+          {/* Launch Bonus Banner */}
+          <div className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-950/80 via-stone-900 to-amber-950/80 border border-emerald-500/50 text-emerald-300 text-xs font-bold shadow-sm">
+            <Gift className="w-4 h-4 text-amber-400 animate-pulse" />
+            <span>
+              🎁 هدية حصرية: أول 100 زبون كتزادهم 10 دقائق صوت إضافية أوتوماتيكياً مع أي باقة ختاروها!
+            </span>
           </div>
+        </div>
 
-          {error && (
-            <div className="flex items-center gap-2 rounded-2xl border border-rose-500/40 bg-rose-950/40 p-3 text-xs text-rose-300">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
+        {/* Current User Status Bar */}
+        {userProfile && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-stone-950/80 border border-stone-800 rounded-2xl px-4 py-2.5 mb-5 text-xs">
+            <div className="flex items-center gap-2 text-stone-300">
+              <UserIcon className="w-4 h-4 text-emerald-400" />
+              <span>الحساب الحالي:</span>
+              <strong className="text-amber-300 font-mono" dir="ltr">{userProfile.email}</strong>
             </div>
-          )}
-
-          {submittedSuccess && (
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-950/50 p-3 text-xs text-emerald-300">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span>{submittedSuccess}</span>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-amber-500/10 text-amber-400 font-black rounded-lg border border-amber-500/30">
+                <span dir="ltr" className="font-mono">{(userProfile.tokens || 0).toLocaleString('en-US')}</span> نقطة
+              </span>
+              {userProfile.creditsExpireAt && (
+                <span className="text-[11px] text-stone-400">
+                  تنتهي: {new Date(userProfile.creditsExpireAt).toLocaleDateString('ar-MA')}
+                </span>
+              )}
             </div>
-          )}
+          </div>
+        )}
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {plans.map((plan) => (
-              <div
-                key={plan.id}
-                className={`relative flex flex-col justify-between space-y-4 rounded-2xl p-4 ${
-                  plan.featured
-                    ? "border-2 border-amber-500 bg-gradient-to-b from-amber-950/40 to-stone-950 shadow-lg shadow-amber-500/10"
-                    : "border border-stone-800 bg-stone-950/70"
-                }`}
-              >
-                {plan.featured && (
-                  <span className="absolute -top-3 right-4 rounded-full bg-amber-500 px-2.5 py-0.5 text-[10px] font-black text-stone-950">
-                    الأكثر طلباً
-                  </span>
+        {/* Pricing Cards 4 Columns */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+          
+          {/* Mini Plan */}
+          <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 hover:border-stone-700 transition">
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded font-mono">mini</span>
+                <h4 className="text-sm font-bold text-stone-100">باقة Mini</h4>
+              </div>
+              <div className="text-2xl font-black text-amber-400 my-2 flex items-baseline gap-1.5">
+                <span dir="ltr" className="font-mono">{miniPrice}</span>
+                <span className="text-xs text-stone-400 font-normal">درهم / شحنة</span>
+              </div>
+              <p className="text-[11px] text-stone-400 mb-3">مناسبة باش تجرب الخدمة وتوجد إعلانات قصيرة.</p>
+              <ul className="text-xs text-stone-300 space-y-2">
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 30 دقيقة صوت تقريباً</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> <span dir="ltr" className="font-mono font-bold">18,000</span> نقطة</li>
+                {isEligibleForLaunchBonus && (
+                  <li className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/30 px-2 py-1 rounded border border-emerald-800/40">
+                    <Gift className="w-3.5 h-3.5 shrink-0" /> +10 دقايق بونيس إطلاق مجاناً
+                  </li>
                 )}
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> جميع الأصوات وحقوق الاستعمال التجاري</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> صلاحية الرصيد 3 أشهر</li>
+              </ul>
+            </div>
 
-                <div>
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-stone-100">
-                      باقة {plan.name}
-                    </h4>
-                    <span className="rounded bg-stone-800 px-2 py-0.5 font-mono text-[10px] text-stone-300">
-                      {plan.id}
-                    </span>
-                  </div>
+            <button
+              onClick={() => handleWhatsApp('Mini', miniPrice, 30, 3)}
+              className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-400" />
+              <span>طلب الشحن عبر الواتساب</span>
+            </button>
+          </div>
 
-                  <div className="my-2 text-2xl font-black text-amber-400">
-                    {plan.price}{" "}
-                    <span className="text-xs font-normal text-stone-400">
-                      درهم / شحنة
-                    </span>
-                  </div>
-
-                  <p className="mb-3 text-[11px] leading-relaxed text-stone-400">
-                    {plan.description}
-                  </p>
-
-                  <ul className="space-y-2 text-xs text-stone-300">
-                    <li className="flex items-center gap-1.5">
-                      <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <strong>{plan.minutes} دقيقة صوت تقريباً</strong>
-                    </li>
-                    <li className="flex items-center gap-1.5">
-                      <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <span>{plan.tokens.toLocaleString()} نقطة</span>
-                    </li>
-                    <li className="flex items-center gap-1.5">
-                      <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <span>جميع الأصوات وحقوق الاستعمال التجاري</span>
-                    </li>
-                    <li className="flex items-center gap-1.5">
-                      <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <span>صلاحية الرصيد {plan.validityMonths} أشهر</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={submittingPlan !== null}
-                  onClick={() => requestPlan(plan)}
-                  className={`flex w-full items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-black transition disabled:opacity-50 ${
-                    plan.featured
-                      ? "bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 hover:from-amber-400 hover:to-amber-300"
-                      : "bg-stone-800 text-stone-200 hover:bg-stone-700"
-                  }`}
-                >
-                  {submittingPlan === plan.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MessageCircle className="h-4 w-4 text-emerald-400" />
-                  )}
-                  <span>
-                    {user
-                      ? "طلب الشحن عبر الواتساب"
-                      : "سجل الدخول واطلب الباقة"}
-                  </span>
-                </button>
+          {/* Starter Plan */}
+          <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 hover:border-stone-700 transition">
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded font-mono">starter</span>
+                <h4 className="text-sm font-bold text-stone-100">باقة Starter</h4>
               </div>
-            ))}
+              <div className="text-2xl font-black text-amber-400 my-2 flex items-baseline gap-1.5">
+                <span dir="ltr" className="font-mono">{starterPrice}</span>
+                <span className="text-xs text-stone-400 font-normal">درهم / شحنة</span>
+              </div>
+              <p className="text-[11px] text-stone-400 mb-3">لصناع المحتوى والمتاجر اللي كيخدمو بشكل منتظم.</p>
+              <ul className="text-xs text-stone-300 space-y-2">
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 60 دقيقة صوت تقريباً</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> <span dir="ltr" className="font-mono font-bold">36,000</span> نقطة</li>
+                {isEligibleForLaunchBonus && (
+                  <li className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/30 px-2 py-1 rounded border border-emerald-800/40">
+                    <Gift className="w-3.5 h-3.5 shrink-0" /> +10 دقايق بونيس إطلاق مجاناً
+                  </li>
+                )}
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> جميع الأصوات وحقوق الاستعمال التجاري</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> صلاحية الرصيد 3 أشهر</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => handleWhatsApp('Starter', starterPrice, 60, 3)}
+              className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-400" />
+              <span>طلب الشحن عبر الواتساب</span>
+            </button>
           </div>
 
-          <div className="rounded-2xl border border-stone-800/80 bg-stone-950 p-3.5 text-xs text-stone-400">
-            <p className="mb-1 font-bold text-stone-200">طرق وتعليمات الدفع:</p>
-            <p className="whitespace-pre-line leading-relaxed text-stone-300">
-              {appSettings.paymentInstructions ||
-                "تواصل معنا عبر الواتساب لتأكيد الأداء وتفعيل الرصيد."}
-            </p>
+          {/* Pro Plan - Highlighted */}
+          <div className="bg-gradient-to-b from-amber-950/40 to-stone-950 border-2 border-amber-500 rounded-2xl p-4 flex flex-col justify-between space-y-4 relative shadow-lg shadow-amber-500/10">
+            <div className="absolute -top-3 right-4 bg-amber-500 text-stone-950 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase">
+              الأكثر طلباً
+            </div>
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30 font-mono">pro</span>
+                <h4 className="text-sm font-bold text-amber-300">باقة Pro</h4>
+              </div>
+              <div className="text-2xl font-black text-amber-400 my-2 flex items-baseline gap-1.5">
+                <span dir="ltr" className="font-mono">{proPrice}</span>
+                <span className="text-xs text-stone-400 font-normal">درهم / شحنة</span>
+              </div>
+              <p className="text-[11px] text-stone-300 mb-3">للإعلانات والحملات المتعددة بجميع الأصوات.</p>
+              <ul className="text-xs text-stone-200 space-y-2">
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> 180 دقيقة صوت تقريباً</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> <span dir="ltr" className="font-mono font-bold">108,000</span> نقطة</li>
+                {isEligibleForLaunchBonus && (
+                  <li className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/40 px-2 py-1 rounded border border-emerald-800/40">
+                    <Gift className="w-3.5 h-3.5 shrink-0" /> +10 دقايق بونيس إطلاق مجاناً
+                  </li>
+                )}
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> جميع الأصوات وحقوق الاستعمال التجاري</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-amber-400 shrink-0" /> صلاحية الرصيد 6 أشهر</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => handleWhatsApp('Pro', proPrice, 180, 6)}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 shadow-md"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>طلب الشحن عبر الواتساب</span>
+            </button>
           </div>
+
+          {/* Business Plan */}
+          <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between space-y-4 hover:border-stone-700 transition">
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded font-mono">business</span>
+                <h4 className="text-sm font-bold text-stone-100">باقة Business</h4>
+              </div>
+              <div className="text-2xl font-black text-amber-400 my-2 flex items-baseline gap-1.5">
+                <span dir="ltr" className="font-mono">{businessPrice}</span>
+                <span className="text-xs text-stone-400 font-normal">درهم / شحنة</span>
+              </div>
+              <p className="text-[11px] text-stone-400 mb-3">للوكالات والفرق اللي عندها حجم إنتاج كبير.</p>
+              <ul className="text-xs text-stone-300 space-y-2">
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 720 دقيقة صوت تقريباً</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> <span dir="ltr" className="font-mono font-bold">432,000</span> نقطة</li>
+                {isEligibleForLaunchBonus && (
+                  <li className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/30 px-2 py-1 rounded border border-emerald-800/40">
+                    <Gift className="w-3.5 h-3.5 shrink-0" /> +10 دقايق بونيس إطلاق مجاناً
+                  </li>
+                )}
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> جميع الأصوات وحقوق الاستعمال التجاري</li>
+                <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> صلاحية الرصيد 12 شهر</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => handleWhatsApp('Business', businessPrice, 720, 12)}
+              className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-400" />
+              <span>طلب الشحن عبر الواتساب</span>
+            </button>
+          </div>
+
+        </div>
+
+        {/* Admin quick sync if old prices were cached in Firestore */}
+        {userProfile?.role === 'admin' && (appSettings.businessPriceMAD === 399 || !appSettings.businessPriceMAD) && (
+          <div className="mb-4 bg-amber-950/40 border border-amber-500/40 p-3 rounded-xl flex items-center justify-between text-xs text-amber-300">
+            <span>تنبيه للمدير: قاعدة البيانات ما زالت تحتوي على السعر القديم لباقة Business.</span>
+            <button
+              onClick={handleFixPricesInDB}
+              disabled={resetting}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-lg transition flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${resetting ? 'animate-spin' : ''}`} />
+              <span>تحديث السعر فوراً إلى 599 درهم</span>
+            </button>
+          </div>
+        )}
+
+        {/* Payment Methods instructions matching your exact screenshot */}
+        <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800/80 text-xs text-stone-400 space-y-1">
+          <p className="font-bold text-stone-300">طرق وتعليمات الدفع:</p>
+          <p>
+            {appSettings.paymentInstructions || 'لشحن رصيدك أو تفعيل اشتراكك، تواصل معنا مباشرة عبر واتساب مع إرسال إيميل حسابك وطريقة الدفع المفضلة (CIH Bank / Cash Plus / Wafacash). سيتم تفعيل حسابك وشحن النقاط فوراً!'}
+          </p>
         </div>
       </div>
     </div>

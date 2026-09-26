@@ -8,6 +8,7 @@ interface AudioPlayerProps {
   voiceName?: string;
   toneName?: string;
   onReplay?: () => void;
+  isLight?: boolean;
 }
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
@@ -16,6 +17,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   vocalizedText,
   voiceName,
   toneName,
+  isLight = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -119,9 +121,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="bg-stone-900/90 border border-amber-500/30 rounded-2xl p-5 md:p-6 shadow-xl backdrop-blur-md relative overflow-hidden transition-all duration-300">
+    <div className={`rounded-2xl p-5 md:p-6 shadow-md relative overflow-hidden transition-all duration-300 border ${
+      isLight 
+        ? 'bg-white border-slate-200 text-slate-900 shadow-slate-200/50' 
+        : 'bg-stone-900/90 border-amber-500/30 text-stone-100 shadow-xl backdrop-blur-md'
+    }`}>
       {/* Ambient background glow */}
-      <div className="absolute top-0 right-0 w-64 h-32 bg-gradient-to-bl from-amber-500/10 to-transparent pointer-events-none rounded-tr-2xl" />
+      <div className={`absolute top-0 right-0 w-64 h-32 pointer-events-none rounded-tr-2xl ${
+        isLight ? 'bg-gradient-to-bl from-amber-500/5 to-transparent' : 'bg-gradient-to-bl from-amber-500/10 to-transparent'
+      }`} />
       
       <audio
         ref={audioRef}
@@ -134,17 +142,25 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       {/* Header Info */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${
+            isLight
+              ? 'bg-amber-50 text-amber-800 border-amber-200'
+              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+          }`}>
             جاهز للاستماع 🔊
           </span>
           {voiceName && (
-            <span className="text-xs text-stone-400 bg-stone-800/80 px-2.5 py-1 rounded-full border border-stone-700">
-              الصوت: <strong className="text-stone-200">{voiceName}</strong>
+            <span className={`text-xs px-2.5 py-1 rounded-full border ${
+              isLight ? 'text-slate-600 bg-slate-100 border-slate-200' : 'text-stone-400 bg-stone-800/80 border-stone-700'
+            }`}>
+              الصوت: <strong className={isLight ? 'text-slate-900' : 'text-stone-200'}>{voiceName}</strong>
             </span>
           )}
           {toneName && (
-            <span className="text-xs text-stone-400 bg-stone-800/80 px-2.5 py-1 rounded-full border border-stone-700">
-              النبرة: <strong className="text-stone-200">{toneName}</strong>
+            <span className={`text-xs px-2.5 py-1 rounded-full border ${
+              isLight ? 'text-slate-600 bg-slate-100 border-slate-200' : 'text-stone-400 bg-stone-800/80 border-stone-700'
+            }`}>
+              النبرة: <strong className={isLight ? 'text-slate-900' : 'text-stone-200'}>{toneName}</strong>
             </span>
           )}
         </div>
@@ -152,17 +168,21 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={copyText}
-            className="flex items-center gap-1.5 px-3 py-1 text-xs text-stone-300 hover:text-white bg-stone-800/80 hover:bg-stone-700 rounded-lg border border-stone-700 transition"
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-lg border transition ${
+              isLight 
+                ? 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border-slate-200' 
+                : 'text-stone-300 hover:text-white bg-stone-800/80 hover:bg-stone-700 border-stone-700'
+            }`}
             title="نسخ النص"
           >
-            {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             {isCopied ? 'تم النسخ' : 'نسخ النص'}
           </button>
           
           <a
             href={audioUrl}
             download={`darija-voice-${Date.now()}.wav`}
-            className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 transition"
+            className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-amber-600 dark:text-amber-300 hover:text-amber-700 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 transition"
             title="تحميل المقطع الصوتي بصيغة WAV"
           >
             <Download className="w-3.5 h-3.5" />
@@ -172,13 +192,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       </div>
 
       {/* Main Pronounced Text Display */}
-      <div className="bg-stone-950/70 border border-stone-800 rounded-xl p-4 mb-5 text-right">
-        <p className="text-lg md:text-xl font-medium text-stone-100 leading-relaxed font-sans">
+      <div className={`rounded-xl p-4 mb-5 text-right border ${
+        isLight ? 'bg-slate-50 border-slate-200' : 'bg-stone-950/70 border-stone-800'
+      }`}>
+        <p className={`text-lg md:text-xl font-medium leading-relaxed font-sans ${isLight ? 'text-slate-900' : 'text-stone-100'}`}>
           "{text}"
         </p>
         {vocalizedText && vocalizedText !== text && (
-          <p className="mt-2 text-xs text-amber-400/80 border-t border-stone-800/80 pt-2 flex items-center gap-1">
-            <span className="text-stone-500">النطق المحسن بالدارجة:</span>
+          <p className={`mt-2 text-xs border-t pt-2 flex items-center gap-1 ${
+            isLight ? 'text-amber-700 border-slate-200' : 'text-amber-400/80 border-stone-800/80'
+          }`}>
+            <span className={isLight ? 'text-slate-500' : 'text-stone-500'}>النطق المحسن بالدارجة:</span>
             <span>{vocalizedText}</span>
           </p>
         )}
@@ -219,16 +243,22 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           step="0.01"
           value={currentTime}
           onChange={handleSeek}
-          className="w-full h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+          className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-amber-500 ${
+            isLight ? 'bg-slate-200' : 'bg-stone-800'
+          }`}
         />
-        <div className="flex justify-between text-xs text-stone-400 font-mono mt-1 px-1">
+        <div className={`flex justify-between text-xs font-mono mt-1 px-1 ${
+          isLight ? 'text-slate-500' : 'text-stone-400'
+        }`}>
           <span>{formatTime(currentTime)}</span>
           <span>{formatTime(duration)}</span>
         </div>
       </div>
 
       {/* Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-stone-800">
+      <div className={`flex flex-wrap items-center justify-between gap-4 pt-2 border-t ${
+        isLight ? 'border-slate-100' : 'border-stone-800'
+      }`}>
         {/* Play/Pause & Reset */}
         <div className="flex items-center gap-3">
           <button
@@ -239,7 +269,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 setIsPlaying(true);
               }
             }}
-            className="p-2.5 rounded-full text-stone-400 hover:text-stone-100 hover:bg-stone-800 transition"
+            className={`p-2.5 rounded-full transition ${
+              isLight ? 'text-slate-500 hover:text-slate-800 hover:bg-slate-100' : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800'
+            }`}
             title="إعادة من البداية"
           >
             <RotateCcw className="w-4 h-4" />
@@ -247,7 +279,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
           <button
             onClick={togglePlay}
-            className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold shadow-lg shadow-amber-500/20 hover:scale-105 active:scale-95 transition-all"
+            className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold shadow-md shadow-amber-500/20 hover:scale-105 active:scale-95 transition-all"
             title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل الصوت'}
           >
             {isPlaying ? (
@@ -259,10 +291,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
           <button
             onClick={cycleSpeed}
-            className="px-2.5 py-1 text-xs font-semibold bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg border border-stone-700 flex items-center gap-1 transition"
+            className={`px-2.5 py-1 text-xs font-semibold rounded-lg border flex items-center gap-1 transition ${
+              isLight
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                : 'bg-stone-800 hover:bg-stone-700 text-stone-300 border-stone-700'
+            }`}
             title="سرعة القراءة"
           >
-            <FastForward className="w-3 h-3 text-amber-400" />
+            <FastForward className="w-3 h-3 text-amber-500" />
             <span>{playbackRate}x</span>
           </button>
         </div>
@@ -271,11 +307,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={toggleMute}
-            className="p-2 text-stone-400 hover:text-stone-200 transition"
+            className={`p-2 transition ${isLight ? 'text-slate-500 hover:text-slate-800' : 'text-stone-400 hover:text-stone-200'}`}
             title={isMuted ? 'إلغاء الكتم' : 'كتم الصوت'}
           >
             {isMuted || volume === 0 ? (
-              <VolumeX className="w-4 h-4 text-rose-400" />
+              <VolumeX className="w-4 h-4 text-rose-500" />
             ) : (
               <Volume2 className="w-4 h-4" />
             )}
@@ -287,7 +323,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             step="0.05"
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
-            className="w-16 md:w-24 h-1 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+            className={`w-16 md:w-24 h-1 rounded-lg appearance-none cursor-pointer accent-amber-500 ${
+              isLight ? 'bg-slate-200' : 'bg-stone-800'
+            }`}
           />
         </div>
       </div>

@@ -2,16 +2,7 @@ node_modules/
 build/
 dist/
 coverage/
-
 .DS_Store
 *.log
-
-.env
-.env.*
+.env*
 !.env.example
-
-bun.lock
-bun.lockb
-
-*-admin*.json
-*service-account*.json

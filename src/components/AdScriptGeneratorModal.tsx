@@ -1,14 +1,5 @@
-import React, { useState } from "react";
-import {
-  Sparkles,
-  Megaphone,
-  Loader2,
-  ArrowRight,
-  Check,
-  X,
-  Flame,
-} from "lucide-react";
-import { apiFetch } from "../lib/api";
+import React, { useState } from 'react';
+import { Sparkles, Megaphone, Loader2, ArrowRight, Check, X, Flame } from 'lucide-react';
 
 interface AdScriptGeneratorModalProps {
   isOpen: boolean;
@@ -21,10 +12,8 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
   onClose,
   onApplyScript,
 }) => {
-  const [productDesc, setProductDesc] = useState("");
-  const [audience, setAudience] = useState(
-    "المشترين المغاربة عبر فيسبوك وتيك توك",
-  );
+  const [productDesc, setProductDesc] = useState('');
+  const [audience, setAudience] = useState('المشترين المغاربة عبر فيسبوك وتيك توك');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     title?: string;
@@ -41,21 +30,21 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch<{
-        title?: string;
-        script?: string;
-        hook?: string;
-        voiceRecommendation?: string;
-      }>("/api/darija/generate-ad-script", {
-        method: "POST",
+      const resp = await fetch('/api/darija/generate-ad-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           productDescription: productDesc,
           targetAudience: audience,
         }),
       });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || 'فشل في توليد نص الإعلان.');
+      }
       setResult(data);
     } catch (err: any) {
-      setError(err.message || "حدث خطأ غير متوقع.");
+      setError(err.message || 'حدث خطأ غير متوقع.');
     } finally {
       setLoading(false);
     }
@@ -63,47 +52,39 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
 
   const handleUse = () => {
     if (result?.script) {
-      onApplyScript(result.script, result.voiceRecommendation || "salma_ads");
+      onApplyScript(result.script, result.voiceRecommendation || 'salma_ads');
       onClose();
     }
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div
-        className="bg-stone-900 border border-amber-500/40 rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden shadow-2xl p-5 sm:p-6 relative text-right my-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-stone-950/85 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-stone-900 border border-amber-500/40 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl p-6 relative text-right">
         <button
-          type="button"
           onClick={onClose}
-          aria-label="إغلاق"
-          className="absolute top-3 left-3 sm:top-4 sm:left-4 z-10 p-2 text-stone-300 hover:text-white rounded-xl bg-stone-800/80 hover:bg-stone-700 border border-stone-700 transition"
+          className="absolute top-4 left-4 p-1.5 text-stone-400 hover:text-white rounded-xl hover:bg-stone-800 transition"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <div className="overflow-y-auto pr-0.5 space-y-4">
-          <div className="flex items-center gap-3 mb-2 pr-2">
-            <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
-              <Megaphone className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm sm:text-base font-black text-stone-100 flex items-center gap-1.5 flex-wrap">
-                <span>كاتب إعلانات المنتجات الذكي بالدارجة</span>
-                <span className="text-[10px] bg-amber-500 text-stone-950 font-bold px-2 py-0.5 rounded-full">
-                  E-Commerce AI
-                </span>
-              </h3>
-              <p className="text-xs text-stone-400">
-                اكتب اسم منتوجك وسيقوم الذكاء الاصطناعي بصياغة إعلان تسويقي جاهز
-              </p>
-            </div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            <Megaphone className="w-5 h-5" />
           </div>
+          <div>
+            <h3 className="text-base font-black text-stone-100 flex items-center gap-1.5">
+              <span>كاتب إعلانات المنتجات الذكي بالدارجة</span>
+              <span className="text-[10px] bg-amber-500 text-stone-950 font-bold px-2 py-0.5 rounded-full">
+                E-Commerce AI
+              </span>
+            </h3>
+            <p className="text-xs text-stone-400">
+              اكتب اسم منتوجك وسيقوم الذكاء الاصطناعي بصياغة إعلان تسويقي جاهز للقراءة والتسجيل
+            </p>
+          </div>
+        </div>
 
+        <div className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-stone-200 mb-1.5">
               شنو هو المنتوج أو الخدمة ديالك؟ (الوصف والمميزات):
@@ -151,14 +132,9 @@ export const AdScriptGeneratorModal: React.FC<AdScriptGeneratorModalProps> = ({
           {result && (
             <div className="bg-stone-950 border border-amber-500/40 rounded-2xl p-4 space-y-3 animate-in fade-in">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-black text-amber-400">
-                  الإعلان المقترح بالدارجة:
-                </span>
+                <span className="text-xs font-black text-amber-400">الإعلان المقترح بالدارجة:</span>
                 <span className="text-[10px] bg-stone-800 text-stone-300 px-2 py-0.5 rounded-full">
-                  الصوت الموصى به:{" "}
-                  {result.voiceRecommendation === "salma_ads"
-                    ? "سلمى (Salma)"
-                    : "المهدي (Mehdi)"}
+                  الصوت الموصى به: {result.voiceRecommendation === 'salma_ads' ? 'سلمى (Salma)' : 'المهدي (Mehdi)'}
                 </span>
               </div>
 

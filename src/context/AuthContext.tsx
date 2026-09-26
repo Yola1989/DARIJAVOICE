@@ -1,22 +1,22 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   User,
-  browserLocalPersistence,
-  createUserWithEmailAndPassword,
-  getRedirectResult,
-  onAuthStateChanged,
-  setPersistence,
-  signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
-  signOut as firebaseSignOut,
-  updateProfile,
-} from "firebase/auth";
-import { doc, onSnapshot } from "firebase/firestore";
-import { auth, db, googleProvider } from "../lib/firebase";
-import { apiFetch } from "../lib/api";
-import { AppSettings, UserProfile } from "../types";
-import { DEFAULT_APP_SETTINGS } from "../data/presets";
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut as fbSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+} from 'firebase/firestore';
+import { auth, googleProvider, db } from '../lib/firebase';
+import { UserProfile, AppSettings } from '../types';
+import { DEFAULT_APP_SETTINGS } from '../data/presets';
 
 interface AuthContextType {
   user: User | null;
@@ -24,136 +24,206 @@ interface AuthContextType {
   appSettings: AppSettings;
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (
-    email: string,
-    password: string,
-    name: string,
-  ) => Promise<void>;
+  signInWithEmail: (e: string, p: string) => Promise<void>;
+  signUpWithEmail: (e: string, p: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
+  consumeTokens: (amount: number, isTrial: boolean) => Promise<boolean>;
   refreshProfile: () => Promise<void>;
 }
 
-export const ADMIN_EMAILS = [
-  "younes.ahdidou@gmail.com",
-  "younes.ahdidou@googlemail.com",
-];
-export const isUserAdminEmail = (email?: string | null) =>
-  Boolean(email && ADMIN_EMAILS.includes(email.trim().toLowerCase()));
+const ADMIN_EMAIL = 'younes.ahdidou@gmail.com';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [appSettings, setAppSettings] =
-    useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [loading, setLoading] = useState(true);
 
-  const refreshProfile = async () => {
-    if (!auth.currentUser) return;
-    const response = await apiFetch<{
-      profile: UserProfile;
-      settings?: AppSettings;
-    }>("/api/me/bootstrap", {
-      method: "POST",
-    });
-    setUserProfile(response.profile);
-    if (response.settings)
-      setAppSettings({ ...DEFAULT_APP_SETTINGS, ...response.settings });
-  };
-
+  // Subscribe to App Settings safely
   useEffect(() => {
-    getRedirectResult(auth).catch((error) => {
-      console.error("Google redirect sign-in failed:", error);
-    });
-
-    let unsubscribeProfile: (() => void) | undefined;
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      unsubscribeProfile?.();
-      unsubscribeProfile = undefined;
-      setUser(currentUser);
-      setUserProfile(null);
-
-      if (!currentUser) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        await refreshProfile();
-        unsubscribeProfile = onSnapshot(
-          doc(db, "users", currentUser.uid),
-          (snapshot) =>
-            snapshot.exists() && setUserProfile(snapshot.data() as UserProfile),
-          (error) => console.warn("Profile listener:", error),
-        );
-      } catch (error) {
-        console.error("Profile bootstrap failed:", error);
-      } finally {
-        setLoading(false);
-      }
-    });
+    let unsubSettings: (() => void) | undefined;
+    try {
+      const settingsDoc = doc(db, 'settings', 'global');
+      unsubSettings = onSnapshot(
+        settingsDoc,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            setAppSettings({ ...DEFAULT_APP_SETTINGS, ...snapshot.data() });
+          } else {
+            // Only admin can write default settings, otherwise use client-side defaults
+            if (userProfile?.role === 'admin') {
+              setDoc(settingsDoc, DEFAULT_APP_SETTINGS).catch(console.error);
+            }
+          }
+        },
+        (err) => {
+          console.warn('Firestore settings subscription notice (using local defaults):', err.message);
+        }
+      );
+    } catch (e) {
+      console.warn('Firestore settings initialization error:', e);
+    }
 
     return () => {
-      unsubscribeProfile?.();
-      unsubscribeAuth();
+      if (unsubSettings) unsubSettings();
+    };
+  }, [userProfile?.role]);
+
+  // Listen to Auth State
+  useEffect(() => {
+    let unsubProfile: (() => void) | undefined;
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async (currentUser) => {
+        try {
+          setUser(currentUser);
+          if (currentUser) {
+            // Fetch or create user doc
+            const userDocRef = doc(db, 'users', currentUser.uid);
+            const userSnap = await getDoc(userDocRef);
+
+            const isAdmin = currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+            if (userSnap.exists()) {
+              const data = userSnap.data() as UserProfile;
+              // Ensure admin status is updated if user matches admin email
+              if (isAdmin && (data.role !== 'admin' || data.status !== 'active')) {
+                await updateDoc(userDocRef, { role: 'admin', status: 'active' });
+                data.role = 'admin';
+                data.status = 'active';
+              }
+              setUserProfile(data);
+            } else {
+              // New User Registration
+              const newProfile: UserProfile = {
+                id: currentUser.uid,
+                email: currentUser.email || '',
+                displayName: currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'مستخدم'),
+                role: isAdmin ? 'admin' : 'user',
+                status: isAdmin ? 'active' : 'pending', // Pending activation for regular users
+                tokens: isAdmin ? 999999 : 50, // 50 starting tokens for trial
+                freeTrialsRemaining: isAdmin ? 999999 : DEFAULT_APP_SETTINGS.freeTrialsDefaultCount,
+                freeTrialMaxSeconds: DEFAULT_APP_SETTINGS.freeTrialMaxSeconds,
+                subscriptionTier: isAdmin ? 'unlimited' : 'free',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+
+              await setDoc(userDocRef, newProfile);
+              setUserProfile(newProfile);
+            }
+
+            // Live snapshot listener for user profile updates
+            unsubProfile = onSnapshot(
+              userDocRef,
+              (snap) => {
+                if (snap.exists()) {
+                  setUserProfile(snap.data() as UserProfile);
+                }
+              },
+              (profileErr) => {
+                console.warn('Profile sync notice:', profileErr.message);
+              }
+            );
+          } else {
+            setUserProfile(null);
+          }
+        } catch (authErr) {
+          console.error('Error handling auth state change:', authErr);
+        } finally {
+          setLoading(false);
+        }
+      },
+      (err) => {
+        console.error('onAuthStateChanged error:', err);
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+      if (unsubProfile) unsubProfile();
     };
   }, []);
 
-  useEffect(() => {
-    apiFetch<{ settings: AppSettings }>("/api/settings")
-      .then(({ settings }) =>
-        setAppSettings({ ...DEFAULT_APP_SETTINGS, ...settings }),
-      )
-      .catch(() => setAppSettings(DEFAULT_APP_SETTINGS));
-  }, []);
-
   const signInWithGoogle = async () => {
-    await setPersistence(auth, browserLocalPersistence);
-
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      const redirectFallbackCodes = new Set([
-        "auth/invalid-credential",
-        "auth/popup-blocked",
-        "auth/operation-not-supported-in-this-environment",
-      ]);
-
-      if (redirectFallbackCodes.has(error?.code)) {
-        await signInWithRedirect(auth, googleProvider);
-        return;
-      }
-
-      throw error;
+    } catch (err: any) {
+      console.error('Google Sign In Error:', err);
+      throw err;
     }
   };
 
-  const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email.trim(), password);
+  const signInWithEmail = async (email: string, pass: string) => {
+    await signInWithEmailAndPassword(auth, email, pass);
   };
 
-  const signUpWithEmail = async (
-    email: string,
-    password: string,
-    name: string,
-  ) => {
-    const credential = await createUserWithEmailAndPassword(
-      auth,
-      email.trim(),
-      password,
-    );
-    if (name.trim())
-      await updateProfile(credential.user, { displayName: name.trim() });
-    await credential.user.getIdToken(true);
-    await refreshProfile();
+  const signUpWithEmail = async (email: string, pass: string, name: string) => {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const newProfile: UserProfile = {
+      id: cred.user.uid,
+      email: cred.user.email || email,
+      displayName: name || email.split('@')[0],
+      role: isAdmin ? 'admin' : 'user',
+      status: isAdmin ? 'active' : 'pending',
+      tokens: isAdmin ? 999999 : 50,
+      freeTrialsRemaining: isAdmin ? 999999 : appSettings.freeTrialsDefaultCount,
+      freeTrialMaxSeconds: appSettings.freeTrialMaxSeconds,
+      subscriptionTier: isAdmin ? 'unlimited' : 'free',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(doc(db, 'users', cred.user.uid), newProfile);
+    setUserProfile(newProfile);
   };
 
   const signOut = async () => {
-    await firebaseSignOut(auth);
+    await fbSignOut(auth);
+    setUserProfile(null);
+  };
+
+  const refreshProfile = async () => {
+    if (user) {
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) {
+        setUserProfile(snap.data() as UserProfile);
+      }
+    }
+  };
+
+  const consumeTokens = async (amount: number, isTrial: boolean): Promise<boolean> => {
+    if (!user || !userProfile) return false;
+    if (userProfile.role === 'admin') return true;
+
+    const userDocRef = doc(db, 'users', user.uid);
+
+    if (isTrial) {
+      if (userProfile.freeTrialsRemaining <= 0) return false;
+      const updatedTrials = Math.max(0, userProfile.freeTrialsRemaining - 1);
+      await updateDoc(userDocRef, {
+        freeTrialsRemaining: updatedTrials,
+        updatedAt: new Date().toISOString(),
+      });
+      setUserProfile((prev) => prev ? { ...prev, freeTrialsRemaining: updatedTrials } : null);
+      return true;
+    } else {
+      // Activated user token deduction
+      if (userProfile.status !== 'active') return false;
+      if (userProfile.tokens < amount) return false;
+
+      const updatedTokens = Math.max(0, userProfile.tokens - amount);
+      await updateDoc(userDocRef, {
+        tokens: updatedTokens,
+        updatedAt: new Date().toISOString(),
+      });
+      setUserProfile((prev) => prev ? { ...prev, tokens: updatedTokens } : null);
+      return true;
+    }
   };
 
   return (
@@ -167,6 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         signInWithEmail,
         signUpWithEmail,
         signOut,
+        consumeTokens,
         refreshProfile,
       }}
     >
@@ -176,7 +247,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 };
 
 export const useAuth = () => {
-  const value = useContext(AuthContext);
-  if (!value) throw new Error("useAuth must be used within AuthProvider");
-  return value;
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  return context;
 };
