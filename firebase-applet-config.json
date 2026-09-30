@@ -1,12 +1,12 @@
 {
-  "projectId": "ageless-karma-99brs",
-  "appId": "1:933854864465:web:0dba359f7cf0418f8cc470",
-  "apiKey": "AIzaSyAI8LzgaogXqsSiZVF-OXR1bo4C8D_t-uM",
-  "authDomain": "ageless-karma-99brs.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-darijatts-94538360-fc66-48a4-9f2f-e7a7265a8b65",
-  "storageBucket": "ageless-karma-99brs.firebasestorage.app",
-  "messagingSenderId": "933854864465",
+  "projectId": "darijavoice-app2",
+  "appId": "1:344701327573:web:08c188fba4c49a66bd2a5c",
+  "apiKey": "AIzaSyB7JcZ7GLXMXHNe42-_fqjhvHIb8v9YwVY",
+  "authDomain": "darijavoice-app2.firebaseapp.com",
+  "databaseURL": "https://darijavoice-app2-default-rtdb.firebaseio.com",
+  "storageBucket": "darijavoice-app2.firebasestorage.app",
+  "messagingSenderId": "344701327573",
   "measurementId": "",
-  "oAuthClientId": "933854864465-esghkuth23gcbg87i7q1hj2kc4eeq44d.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
